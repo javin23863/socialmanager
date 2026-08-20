@@ -51,6 +51,11 @@ const PLATFORM_SPECS = {
     context: 'owned professional media and comments; external discovery is not a proven write route',
     status: 'owned_surface_only',
     sourceUrls: [
+      'https://developers.facebook.com/docs/instagram-platform/overview/',
+      'https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/',
+      'https://developers.facebook.com/docs/instagram-platform/comment-moderation/',
+      'https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/',
+      'https://developers.facebook.com/docs/permissions/',
       'https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api',
       'https://www.facebook.com/help/instagram/138925576505882',
       'https://www.facebook.com/help/instagram/1038071743007909',
@@ -59,7 +64,7 @@ const PLATFORM_SPECS = {
       'https://www.facebook.com/legal/terms',
     ],
     actions: {
-      comment: { external: false, owned: true, route: 'managed professional-media comments only' },
+      comment: { external: false, owned: false, route: null, reason: 'Instagram owned care is reply-only in this product contract.' },
       reply: { external: false, owned: true, route: 'managed professional-media comments only' },
       like: { external: false, owned: false, route: null, reason: 'No reviewed official route for proactive external likes.' },
     },
@@ -95,6 +100,10 @@ const PLATFORM_SPECS = {
     status: 'owned_surface_only',
     sourceUrls: [
       'https://developers.facebook.com/docs/graph-api/',
+      'https://developers.facebook.com/docs/graph-api/reference/page/feed/',
+      'https://developers.facebook.com/docs/graph-api/reference/page-post/comments/',
+      'https://developers.facebook.com/docs/graph-api/reference/object/comments/',
+      'https://developers.facebook.com/docs/permissions/',
       'https://www.facebook.com/help/772447486244207',
       'https://www.facebook.com/help/121317464722113',
       'https://www.facebook.com/help/www/2862139500770200',
@@ -176,6 +185,55 @@ const PLATFORM_SPECS = {
   },
 };
 
+const SURFACE_SOURCE_URLS = {
+  youtube: {
+    title: 'https://support.google.com/youtube/answer/57404',
+    description: 'https://support.google.com/youtube/answer/57404',
+    video: 'https://support.google.com/youtube/answer/15424877',
+  },
+  instagram: {
+    caption: 'https://www.facebook.com/help/instagram/138925576505882',
+    bio: 'https://www.facebook.com/help/instagram/728994388226960',
+    video: 'https://www.facebook.com/help/instagram/1038071743007909',
+  },
+  facebook: {
+    video: 'https://www.facebook.com/help/121317464722113',
+  },
+  tiktok: {
+    caption: 'https://developers.tiktok.com/doc/content-posting-api-reference-direct-post',
+    bio: 'https://support.tiktok.com/en/using-tiktok/creating-videos/creator-tools-on-tiktok',
+    video: 'https://support.tiktok.com/en/using-tiktok/creating-videos/creator-tools-on-tiktok',
+  },
+};
+
+for (const [platform, spec] of Object.entries(PLATFORM_SPECS)) {
+  for (const [surfaceName, surface] of Object.entries(spec.surfaces || {})) {
+    const hasNumericRule = Object.values(surface).some((value) => typeof value === 'number' && Number.isFinite(value));
+    if (!hasNumericRule) continue;
+    surface.verificationDate = SNAPSHOT_DATE;
+    surface.sourceClass = surface.platformMaxSource === 'house_reference_needs_day_of_verification'
+      ? 'house_reference'
+      : surface.qualityMaxSource === 'studio_policy'
+        ? 'studio_policy'
+        : 'official';
+    surface.sourceUrl = SURFACE_SOURCE_URLS[platform]?.[surfaceName] || 'local://social-engagement-studio/platform-specs';
+  }
+}
+
+function platformSpecStatus({ now = Date.now(), maxAgeDays = 30 } = {}) {
+  const snapshotTime = Date.parse(`${SNAPSHOT_DATE}T00:00:00.000Z`);
+  const ageDays = Number.isFinite(snapshotTime) ? Math.max(0, (now - snapshotTime) / 86400000) : null;
+  const stale = ageDays === null || ageDays > Number(maxAgeDays || 30);
+  return {
+    snapshotDate: SNAPSHOT_DATE,
+    ageDays: ageDays === null ? null : Number(ageDays.toFixed(2)),
+    maxAgeDays: Number(maxAgeDays || 30),
+    status: stale ? 'VERIFY_REQUIRED' : 'CURRENT',
+    stale,
+    criticalUnknowns: Object.values(PLATFORM_SPECS).flatMap((spec) => Object.entries(spec.surfaces || {}).filter(([, surface]) => surface.platformMaxChars === null).map(([surfaceName]) => `${spec.id}.${surfaceName}.platformMaxChars`)),
+  };
+}
+
 function getPlatformSpec(platform) {
   return PLATFORM_SPECS[String(platform || '').toLowerCase()] || null;
 }
@@ -209,10 +267,21 @@ function validateSurfaceText({ platform, surface, text }) {
   };
 }
 
-function capabilityFor({ platform, action = 'comment', targetScope = 'external' }) {
+function capabilityFor({ platform, action = 'comment', targetScope = 'external', now = Date.now(), maxAgeDays = 30 }) {
   const spec = getPlatformSpec(platform);
   const actionSpec = spec?.actions?.[action];
   if (!actionSpec) return { status: 'UNKNOWN', reason: 'No action contract is registered.' };
+  const freshness = platformSpecStatus({ now, maxAgeDays });
+  if (freshness.stale) {
+    return {
+      status: 'VERIFY_REQUIRED',
+      allowed: false,
+      targetScope,
+      route: actionSpec.route,
+      reason: `Platform specification snapshot is stale; verify ${spec.label} capability sources before using a provider adapter.`,
+      specFreshness: freshness,
+    };
+  }
   const allowed = targetScope === 'owned' ? actionSpec.owned : actionSpec.external;
   return {
     status: allowed ? 'READY' : 'BLOCK',
@@ -220,12 +289,14 @@ function capabilityFor({ platform, action = 'comment', targetScope = 'external' 
     targetScope,
     route: actionSpec.route,
     reason: allowed ? 'Official route is documented for this target scope.' : (actionSpec.reason || `Official ${action} route is not documented for ${targetScope} targets.`),
+    specFreshness: freshness,
   };
 }
 
 const PLATFORM_CAPABILITIES = Object.fromEntries(Object.entries(PLATFORM_SPECS).map(([id, spec]) => [id, {
     ...spec,
     specSnapshot: SNAPSHOT_DATE,
+    specFreshness: platformSpecStatus(),
     comment: Boolean(spec.actions.comment.external || spec.actions.comment.owned),
     like: Boolean(spec.actions.like.external || spec.actions.like.owned),
     readBack: id === 'youtube',
@@ -239,5 +310,6 @@ module.exports = {
   characterCount,
   getPlatformSpec,
   getSurfaceSpec,
+  platformSpecStatus,
   validateSurfaceText,
 };

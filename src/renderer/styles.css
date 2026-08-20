@@ -72,6 +72,8 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .button-secondary:hover:not(:disabled) { border-color: var(--cobalt); color: var(--cobalt); }
 .button-quiet { color: var(--muted); background: transparent; }
 .button-quiet:hover:not(:disabled) { background: var(--paper-deep); color: var(--ink); }
+.button-compact { min-height: 28px; padding: 6px 8px; font-size: 9px; }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .button-wide { width: 100%; }
 
 .app-grid { display: grid; grid-template-columns: 258px minmax(0, 1fr) 320px; min-height: calc(100vh - 72px); }
@@ -108,6 +110,10 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .field-textarea { resize: vertical; min-height: 58px; }
 .field-note { margin-top: 7px; font-size: 11px; line-height: 1.4; }
 .field-grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.provider-target-fields { margin-top: 4px; }
+.authorized-media-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; margin-top: 10px; }
+.media-actions { align-items: center; margin-top: 8px; }
+.media-actions .field-note { margin: 0; }
 .policy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; margin-top: 5px; }
 .policy-grid .field-label:last-child { grid-column: 1 / -1; }
 .policy-grid .field-input { display: block; margin-top: 5px; }
@@ -202,6 +208,19 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .capability-state-ready { color: var(--green); }
 .capability-state-block { color: var(--red); }
 .capability-copy { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+
+.account-list, .reconciliation-list, .outcome-list, .exemplar-list { margin-top: 9px; }
+.account-row, .reconciliation-row, .outcome-row, .exemplar-row { padding: 9px 0; border-top: 1px solid var(--line); }
+.account-row:first-child, .reconciliation-row:first-child, .outcome-row:first-child, .exemplar-row:first-child { border-top: 0; }
+.account-row-top, .reconciliation-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.account-name, .reconciliation-key { min-width: 0; overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.account-status, .reconciliation-status { color: var(--green); font-size: 9px; font-weight: 800; letter-spacing: 0.08em; }
+.account-status-disconnected, .account-status-error, .reconciliation-status { color: var(--red); }
+.account-copy, .reconciliation-copy { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.outcome-copy, .exemplar-copy { margin: 3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.35; }
+.outcome-top, .exemplar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.outcome-name, .exemplar-name { color: var(--ink); font-size: 10px; font-weight: 800; }
+.reconciliation-row .button { margin-top: 7px; }
 
 .receipt-section { min-height: 210px; }
 .ledger-list { margin-top: 9px; }

@@ -2,14 +2,57 @@
   "name": "social-engagement-studio",
   "version": "0.1.0",
   "private": true,
+  "author": "Social Engagement Studio",
   "description": "A provider-agnostic desktop studio for context-aware, quality-gated social engagement.",
   "main": "src/main.cjs",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/core/engine.cjs && node --check src/core/youtube.cjs && node --check src/renderer/app.js"
+    "specs:status": "node scripts/verify-platform-specs.cjs",
+    "package:dir": "node scripts/write-build-metadata.cjs && electron-builder --win --dir --config.win.signExecutable=false",
+    "package:installer": "node scripts/assert-windows-signing.cjs && node scripts/write-build-metadata.cjs --require-clean && electron-builder --win nsis",
+    "check": "node --check src/main.cjs && node --check src/preload.cjs && node --check src/core/build-metadata.cjs && node --check src/core/engine.cjs && node --check src/core/youtube.cjs && node --check src/core/youtube-auth.cjs && node --check src/core/meta-auth.cjs && node --check src/core/meta.cjs && node --check src/core/media-understanding.cjs && node --check src/core/storage.cjs && node --check src/renderer/app.js && node --check scripts/verify-platform-specs.cjs && node --check scripts/write-build-metadata.cjs"
   },
   "devDependencies": {
-    "electron": "^43.4.1"
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.socialengagementstudio.desktop",
+    "productName": "Social Engagement Studio",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "scripts/**/*",
+      "research/**/*",
+      "CONTEXT.md",
+      "DESIGN.md",
+      "PRODUCT.md",
+      "README.md",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "signtoolOptions": {
+        "signingHashAlgorithms": ["sha256"]
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "artifactName": "Social-Engagement-Studio-${version}-Setup.${ext}"
+    }
   }
 }

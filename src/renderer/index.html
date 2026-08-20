@@ -61,6 +61,13 @@
             <p class="field-note" id="write-note">Simulation receipts only until an official adapter and scope are configured.</p>
             <label class="field-label" for="discovery-query">YouTube discovery query</label>
             <input class="field-input" id="discovery-query" type="text" placeholder="market structure|liquidity|breadth" autocomplete="off">
+            <label class="field-label" for="cycle-platform">Cycle surface</label>
+            <select class="field-input" id="cycle-platform">
+              <option value="youtube">YouTube niche discovery</option>
+              <option value="instagram">Instagram owned community care</option>
+              <option value="facebook">Facebook Page community care</option>
+              <option value="tiktok" disabled>TikTok — last / read-only external</option>
+            </select>
             <div class="policy-grid">
               <label class="field-label" for="max-per-run">Per run<input class="field-input" id="max-per-run" type="number" min="1" max="10"></label>
               <label class="field-label" for="max-per-day">Per 24h<input class="field-input" id="max-per-day" type="number" min="1" max="50"></label>
@@ -110,6 +117,10 @@
             <input class="field-input" id="provider-base-url" type="url" placeholder="https://.../v1" autocomplete="off">
             <label class="field-label" for="provider-model">Model</label>
             <input class="field-input" id="provider-model" type="text" placeholder="model-id" autocomplete="off">
+            <label class="field-label" for="provider-vision-model">Authorized media vision model <span class="label-hint">optional</span></label>
+            <input class="field-input" id="provider-vision-model" type="text" placeholder="vision-model-id" autocomplete="off">
+            <label class="field-label" for="provider-transcription-model">Authorized media transcription model <span class="label-hint">optional</span></label>
+            <input class="field-input" id="provider-transcription-model" type="text" placeholder="transcription-model-id" autocomplete="off">
             <label class="field-label" for="provider-critic-model">Independent critic model</label>
             <input class="field-input" id="provider-critic-model" type="text" placeholder="critic-model-id" autocomplete="off">
             <p class="field-note">Live execution requires a separate critic call that returns PASS for every candidate. Leave it blank for simulation-only mode.</p>
@@ -126,9 +137,37 @@
             </div>
             <label class="field-label" for="youtube-api-key">Data API key</label>
             <input class="field-input" id="youtube-api-key" type="password" placeholder="optional for URL hydration" autocomplete="new-password">
-            <label class="field-label" for="youtube-access-token">OAuth access token</label>
-            <input class="field-input" id="youtube-access-token" type="password" placeholder="optional for live comment writes" autocomplete="new-password">
+            <label class="field-label" for="youtube-oauth-client-id">Desktop OAuth client ID</label>
+            <input class="field-input" id="youtube-oauth-client-id" type="text" placeholder="...apps.googleusercontent.com" autocomplete="off">
+            <label class="field-label" for="youtube-oauth-client-secret">OAuth client secret <span class="label-hint">optional for desktop clients</span></label>
+            <input class="field-input" id="youtube-oauth-client-secret" type="password" placeholder="leave blank to keep stored value" autocomplete="new-password">
+            <p class="field-note">Connect opens the system browser and returns through a loopback callback protected by PKCE. Tokens stay in OS-protected storage; they never enter the renderer, model, or receipt ledger.</p>
+            <div class="button-row">
+              <button class="button button-secondary" id="connect-youtube" type="button">CONNECT YOUTUBE</button>
+              <button class="button button-quiet" id="disconnect-youtube" type="button">DISCONNECT</button>
+            </div>
+            <p class="field-note" id="youtube-scope">Requested scope: YouTube comment read/write (`youtube.force-ssl`).</p>
             <p class="field-note" id="youtube-status">No YouTube credentials configured.</p>
+          </section>
+
+          <section class="rail-section">
+            <div class="section-heading-row">
+              <h2>Meta connections</h2>
+              <button class="text-button" id="save-meta" type="button">SAVE</button>
+            </div>
+            <label class="field-label" for="meta-app-id">Meta App ID</label>
+            <input class="field-input" id="meta-app-id" type="text" placeholder="App ID" autocomplete="off">
+            <label class="field-label" for="meta-graph-version">Graph API version</label>
+            <input class="field-input" id="meta-graph-version" type="text" placeholder="v26.0" autocomplete="off">
+            <label class="field-label" for="meta-app-secret">Meta App Secret</label>
+            <input class="field-input" id="meta-app-secret" type="password" placeholder="leave blank to keep stored value" autocomplete="new-password">
+            <p class="field-note">Uses Meta’s official Facebook Login route to discover managed Pages and linked professional Instagram accounts. App Review, Business Verification, permissions, and a public webhook callback remain Meta requirements; no browser scraping or private endpoints are used.</p>
+            <div class="button-row">
+              <button class="button button-secondary" id="connect-meta" type="button">CONNECT META</button>
+              <button class="button button-quiet" id="disconnect-meta" type="button">DISCONNECT</button>
+            </div>
+            <p class="field-note" id="meta-permissions">Community permissions are not configured.</p>
+            <p class="field-note" id="meta-status">No Meta credentials configured.</p>
           </section>
         </aside>
 
@@ -173,11 +212,44 @@
                       <option value="owned">Owned account / community care</option>
                     </select>
                   </div>
+                  <div>
+                    <label class="field-label" for="context-action">Action</label>
+                    <select class="field-input" id="context-action">
+                      <option value="comment">Top-level comment</option>
+                      <option value="reply">Reply to comment</option>
+                    </select>
+                  </div>
                 </div>
                 <label class="field-label" for="context-url">Source URL / post URL</label>
                 <div class="input-action-row">
                   <input class="field-input" id="context-url" type="url" autocomplete="off">
                   <button class="button button-secondary" id="hydrate-youtube" type="button">HYDRATE YOUTUBE</button>
+                  <button class="button button-secondary" id="hydrate-meta" type="button">HYDRATE OWNED MEDIA</button>
+                </div>
+                <div class="field-grid-two provider-target-fields">
+                  <div>
+                    <label class="field-label" for="context-target-id">Provider media / post ID</label>
+                    <input class="field-input" id="context-target-id" type="text" placeholder="owned media or Page post ID" autocomplete="off">
+                  </div>
+                  <div>
+                    <label class="field-label" for="context-reply-id">Reply-to comment ID <span class="label-hint">owned care</span></label>
+                    <input class="field-input" id="context-reply-id" type="text" placeholder="incoming comment ID" autocomplete="off">
+                  </div>
+                </div>
+                <div class="authorized-media-row">
+                  <div>
+                    <label class="field-label" for="media-file-path">Authorized local video</label>
+                    <input class="field-input" id="media-file-path" type="text" placeholder="Choose owned or explicitly supplied media" autocomplete="off">
+                  </div>
+                  <div>
+                    <label class="field-label" for="media-transcript-path">Optional transcript file <span class="label-hint">VTT / SRT / TXT</span></label>
+                    <input class="field-input" id="media-transcript-path" type="text" placeholder="Caption file path" autocomplete="off">
+                  </div>
+                </div>
+                <div class="button-row media-actions">
+                  <button class="button button-secondary" id="choose-media" type="button">CHOOSE VIDEO</button>
+                  <button class="button button-secondary" id="inspect-media" type="button">INSPECT AUTHORIZED MEDIA</button>
+                  <span class="field-note" id="media-status">No local media inspected.</span>
                 </div>
                 <label class="field-label" for="context-title">Title</label>
                 <input class="field-input" id="context-title" type="text" autocomplete="off">
@@ -226,6 +298,7 @@
                 <div class="route-actions">
                   <button class="button button-secondary" id="simulate-selected" type="button" disabled>SIMULATE RECEIPT</button>
                   <button class="button button-primary" id="execute-selected" type="button" disabled>AUTO-EXECUTE PASS</button>
+                  <button class="button button-quiet" id="pin-exemplar" type="button" disabled>PIN EXEMPLAR</button>
                 </div>
                 <p class="field-note" id="execution-note">Simulation is local. Live execution requires an armed policy and an official adapter.</p>
               </div>
@@ -273,6 +346,18 @@
             <div class="capability-list" id="capability-list"></div>
           </section>
 
+          <section class="inspection-section account-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">ACTOR REGISTRY</p>
+                <h3>Connected accounts</h3>
+              </div>
+              <span class="mini-state" id="account-count">0</span>
+            </div>
+            <p class="field-note" id="storage-status">Storage status unavailable.</p>
+            <div class="account-list" id="account-list"></div>
+          </section>
+
           <section class="inspection-section receipt-section">
             <div class="panel-heading">
               <div>
@@ -282,6 +367,54 @@
               <span class="mini-state" id="ledger-count">0</span>
             </div>
             <div class="ledger-list" id="ledger-list"></div>
+          </section>
+
+          <section class="inspection-section exception-section" id="reconciliation-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">RECONCILIATION INBOX</p>
+                <h3>Unresolved mutations</h3>
+              </div>
+              <span class="mini-state" id="reconciliation-count">0</span>
+            </div>
+            <p class="field-note">UNKNOWN, DISPATCHED, and provider-accepted writes stay here until the original provider is queried. Only adapter-generated read-back evidence can resolve them; the circuit breaker remains engaged.</p>
+            <div class="reconciliation-list" id="reconciliation-list"></div>
+          </section>
+
+          <section class="inspection-section" id="outcomes-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">OUTCOME SNAPSHOTS</p>
+                <h3>Provider-sourced signals</h3>
+              </div>
+              <span class="mini-state" id="outcome-count">0</span>
+            </div>
+            <p class="field-note">Time-stamped observations are evidence for ranking experiments, not guarantees of virality.</p>
+            <div class="outcome-list" id="outcome-list"></div>
+          </section>
+
+          <section class="inspection-section" id="evaluation-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">VERIFIED EVALUATION SET</p>
+                <h3>Immutable live examples</h3>
+              </div>
+              <span class="mini-state" id="evaluation-count">0</span>
+            </div>
+            <p class="field-note">Only provider-read-back LIVE_VERIFIED receipts enter this set. It is a quality-learning record, not a claim of causation or virality.</p>
+            <div class="outcome-list" id="evaluation-list"></div>
+          </section>
+
+          <section class="inspection-section" id="exemplar-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">PINNED EXEMPLARS</p>
+                <h3>Immutable quality floor</h3>
+              </div>
+              <span class="mini-state" id="exemplar-count">0</span>
+            </div>
+            <p class="field-note">Only operator-pinned copy enters this set. Provider upgrades cannot silently replace it.</p>
+            <div class="exemplar-list" id="exemplar-list"></div>
           </section>
 
           <section class="inspection-section exception-section">

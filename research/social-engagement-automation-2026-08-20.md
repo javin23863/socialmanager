@@ -26,6 +26,30 @@ Autonomous means that the configured policy runs this loop without a serial appr
 
 The app must show this matrix per connected account and refuse actions outside a provider adapter's declared capabilities. “Not proven by the official docs” is a hard ceiling, not an invitation to use private APIs or DOM automation.
 
+## YouTube desktop OAuth contract — verified 2026-08-20
+
+The desktop connection uses Google's installed-application flow through the system browser and a loopback listener bound to `127.0.0.1`. Google documents PKCE for installed apps, recommends the S256 challenge, requires a non-guessable `state`, and describes loopback redirects as the recommended Windows desktop mechanism; manual copy/paste/OOB is deprecated. The implementation is in `src/core/youtube-auth.cjs` and does not embed Google's authorization page in an Electron webview.
+
+The connection requests exactly `https://www.googleapis.com/auth/youtube.force-ssl`. Google's YouTube authorization guide defines that scope as access to YouTube videos, ratings, comments, and captions; the comment insertion and comment-reply endpoints require it. The adapter refuses a token response that does not grant this scope, even when Google returns an otherwise valid access token.
+
+The authorization code exchange requests offline access and requires a refresh token. Before an authorized YouTube request, the main process refreshes an expired access token with `https://oauth2.googleapis.com/token`, preserves the previous refresh token when Google does not return a replacement, and stores a returned replacement. Invalid grants and scope failures clear the local encrypted token references and expose `DISCONNECTED`; network failures retain the encrypted grant but expose `ERROR` so the operator can retry. The renderer receives only booleans, scope names, timestamps, and stable status codes. It never receives an access token, refresh token, authorization code, or client secret.
+
+Primary OAuth sources: [Google OAuth for desktop apps](https://developers.google.com/identity/protocols/oauth2/native-app), [Google OAuth web-server refresh and revocation](https://developers.google.com/identity/protocols/oauth2/web-server), [YouTube OAuth scopes](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps), [YouTube comment implementation](https://developers.google.com/youtube/v3/guides/implementation/comments), and [Google OAuth best practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices).
+
+## Meta owned-media API contract — verified 2026-08-20
+
+The standalone app pins the Meta Graph API route to `v26.0` for this implementation wave. A version pin is not a permanent fact: the UI exposes the version, every live receipt records it, and the platform-spec freshness gate requires re-verification before a stale snapshot is treated as current.
+
+The connected Meta actor registry is deliberately split into two identities: the Facebook Page actor and its linked professional Instagram actor. The Facebook Login route uses the managed-account lookup (`/me/accounts`) to obtain the Page ID, Page access token, Page tasks, and linked `instagram_business_account` ID. The app stores only OS-encrypted credential references, never the token in the renderer, model prompt, or receipt. Missing Page tasks fail closed as unproven capability.
+
+Instagram owned care is bounded to media returned by `/{ig-user-id}/media`. Context hydration then reads the exact media and its `/comments` edge. This product lane generates and posts replies only, using `/{comment-id}/replies`; top-level Instagram comments remain blocked by the product contract. The execution seam re-lists owned media immediately before a write, checks the reply target is present in the fresh comment context, sends the official mutation, then reads the parent edge and verifies the exact text and returned provider ID. External proactive Instagram comments and general likes remain blocked.
+
+Facebook owned care is bounded to Page objects returned by `/{page-id}/feed` whose `from.id` is the connected Page ID. Context hydration reads the exact Page object and its `/comments` edge. Replies use `/{comment-id}/comments`, top-level comments are a separate action, and the adapter reads the parent comments edge after writing. If the returned author identity is present, it must match the Page actor. External proactive Page comments and likes remain blocked.
+
+The implementation requests the narrow managed-care permission set used by this route: `pages_show_list`, `pages_read_engagement`, `pages_read_user_content`, `pages_manage_engagement`, `pages_manage_metadata`, `instagram_basic`, and `instagram_manage_comments`. App Review and account eligibility are provider gates, not claims that OAuth alone grants access. Webhooks (`comments` and `live_comments` where available) are an ingestion optimization; they do not expand action scope or replace ownership proof.
+
+Primary Meta sources: [Instagram Platform overview](https://developers.facebook.com/docs/instagram-platform/overview/), [Instagram API with Facebook Login](https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/), [Instagram comment moderation](https://developers.facebook.com/docs/instagram-platform/comment-moderation/), [Instagram media reference](https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/), [Facebook Page feed reference](https://developers.facebook.com/docs/graph-api/reference/page/feed/), [Page post comments](https://developers.facebook.com/docs/graph-api/reference/page-post/comments/), [object comments](https://developers.facebook.com/docs/graph-api/reference/object/comments/), [comment reference](https://developers.facebook.com/docs/graph-api/reference/comment/), [permissions](https://developers.facebook.com/docs/permissions/), [App Review](https://developers.facebook.com/docs/resp-plat-initiatives/app-review/introduction/), [Meta-maintained Instagram collection](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api), and [Meta Terms](https://www.facebook.com/legal/terms).
+
 ## Platform-specific publishing and copy contracts
 
 This is a mechanics contract, not a claim that one export or one caption should be copied unchanged across networks. The standalone app stores each surface separately in `src/core/platform-specs.cjs`. Every numeric value has a source label; `undocumented` means the reviewed first-party material did not publish a number and the app must not manufacture one.
@@ -125,7 +149,7 @@ The core applies its own schema and semantic validation even when a provider adv
 
 Gates emit a specific verdict (`PASS`, `BLOCK`, `HOLD`, `RETRYABLE`, or `UNKNOWN`) and machine-readable reasons. Silence is not approval. A provider response that accepted a mutation but cannot be read back is `UNKNOWN`, not success; retry only after reconciliation.
 
-The current deterministic critic is intentionally labeled `deterministic_critic_v1`. It blocks the literal regression fixtures for generic praise, promotion, missing evidence, and common AI-tell phrases. Its receipt also states that human readability and an independent model opinion are not performed; those are future coverage, not silent passes.
+The deterministic critic is intentionally labeled `deterministic_critic_v1`. It blocks the literal regression fixtures for generic praise, promotion, missing evidence, and common AI-tell phrases. When configured, a separate model critic is a second read-only call with explicit per-candidate PASS/BLOCK verdicts; a missing or failed independent critic remains NOT_PERFORMED/BLOCK for live work rather than silent approval. Human readability remains outside the current automated coverage.
 
 ## Autonomous policy
 
@@ -142,7 +166,7 @@ The operator sets policy once in the desktop UI. Routine actions can run without
 
 ## Durable state and feedback
 
-The first desktop slice uses local JSON plus JSONL to keep the runtime dependency-light. The durable target schema is relational once the run volume warrants it:
+The desktop app now opens a local SQLite database on first run, imports the prior JSON/JSONL state with timestamped backups, and records schema version and recovery status. JSON/JSONL remains a migration input only; the durable target schema is relational:
 
 ```text
 workspace -> provider_account -> source_item -> context_bundle
@@ -168,7 +192,7 @@ Mutation states are `queued -> dispatched -> provider-accepted -> read-back-veri
 2. Local studio and no-mutation loop: ingest, generate, gate, inspect, simulate, ledger.
 3. Owned-account autonomous care: add official provider actions where scopes and read-back are proven.
 4. Multi-provider capability map: keep unsupported external engagement visibly unsupported.
-5. Outcome learning: add verified metric snapshots and evaluation examples.
+5. Outcome learning: persist verified metric snapshots and evidence-bearing evaluation examples; keep attribution and virality claims explicitly out of scope.
 6. New provider actions only after the official route, scope, rate limits, and read-back contract are documented and tested.
 
 ## Primary sources

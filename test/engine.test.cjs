@@ -8,6 +8,8 @@ const {
   capabilityFor,
   evaluateCandidate,
   assessExecutionPolicy,
+  diversityAssessment,
+  idempotencyKey,
   parseLedgerLines,
   rankDiscoveryTarget,
   rankDiscoveryTargets,
@@ -15,7 +17,7 @@ const {
   simulationReceipt,
   validateSurfaceText,
 } = require('../src/core/engine.cjs');
-const { PLATFORM_SPECS } = require('../src/core/platform-specs.cjs');
+const { PLATFORM_SPECS, platformSpecStatus } = require('../src/core/platform-specs.cjs');
 const { discoverVideos, executeComment, fetchAuthorizedTranscript } = require('../src/core/youtube.cjs');
 
 const usefulCandidate = {
@@ -32,6 +34,7 @@ function contextFor(platform, targetScope = 'external') {
     ...DEFAULT_CONTEXT,
     platform,
     targetScope,
+    action: ['instagram', 'facebook'].includes(platform) ? 'reply' : 'comment',
     contextSources: ['test_fixture'],
   };
 }
@@ -52,6 +55,13 @@ test('platform contracts distinguish official limits from studio quality ceiling
   assert.equal(validateSurfaceText({ platform: 'instagram', surface: 'bio', text: 'x'.repeat(150) }).status, 'PASS');
   assert.equal(validateSurfaceText({ platform: 'instagram', surface: 'bio', text: 'x'.repeat(151) }).status, 'BLOCK');
   assert.equal(validateSurfaceText({ platform: 'tiktok', surface: 'caption', text: 'x'.repeat(4001) }).status, 'BLOCK');
+  assert.equal(PLATFORM_SPECS.youtube.surfaces.title.verificationDate, '2026-08-20');
+  assert.ok(PLATFORM_SPECS.youtube.surfaces.title.sourceUrl);
+  assert.equal(platformSpecStatus({ now: Date.parse('2026-08-21T00:00:00Z'), maxAgeDays: 30 }).status, 'CURRENT');
+  assert.equal(platformSpecStatus({ now: Date.parse('2026-10-01T00:00:00Z'), maxAgeDays: 30 }).status, 'VERIFY_REQUIRED');
+  const staleCapability = capabilityFor({ platform: 'youtube', action: 'comment', targetScope: 'external', now: Date.parse('2026-10-01T00:00:00Z'), maxAgeDays: 30 });
+  assert.equal(staleCapability.status, 'VERIFY_REQUIRED');
+  assert.equal(staleCapability.allowed, false);
 });
 
 test('Unicode characters are counted as characters, not UTF-16 code units', () => {
@@ -69,6 +79,30 @@ test('YouTube external comment can pass the context and scope gates', () => {
   assert.equal(gate.metrics.capability.allowed, true);
   assert.equal(gate.metrics.critic.status, 'PASS');
   assert.deepEqual(gate.metrics.critic.notPerformed, ['human_readability', 'independent_model_opinion']);
+});
+
+test('actor identity is part of idempotency while legacy callers retain the old key shape', () => {
+  const base = { platform: 'youtube', targetUrl: 'https://example.test/video', text: usefulCandidate.text };
+  const legacy = idempotencyKey(base);
+  const actorOne = idempotencyKey({ ...base, actorAccountId: 'youtube:one' });
+  const actorTwo = idempotencyKey({ ...base, actorAccountId: 'youtube:two' });
+  assert.notEqual(actorOne, actorTwo);
+  assert.notEqual(actorOne, legacy);
+  assert.equal(legacy, idempotencyKey(base));
+});
+
+test('campaign diversity blocks semantic near-duplicates and reports the reason', () => {
+  const history = [{
+    receiptId: 'prior-1',
+    commentText: 'The useful distinction here is market structure versus breadth. I would watch the next retest rather than the first reaction—what evidence would invalidate the thesis for you?',
+    evidenceLocators: [{ evidence: 'market structure' }, { evidence: 'breadth' }],
+  }];
+  const result = diversityAssessment('The useful distinction here is market structure versus breadth. I would watch the next retest rather than the first reaction—what evidence would invalidate the thesis for you?', ['market structure', 'breadth'], history);
+  assert.equal(result.status, 'BLOCK');
+  assert.ok(result.reasons.includes('semantic_near_duplicate'));
+  const gate = evaluateCandidate({ ...usefulCandidate, id: 'duplicate' }, buildContextPack(contextFor('youtube')), DEFAULT_PROFILE, history);
+  assert.ok(gate.blocked.includes('repetitive_against_ledger'));
+  assert.ok(gate.metrics.diversity.reasons.length > 0);
 });
 
 test('the shipped-looking generic promo fixture is actually blocked by anti-slop gates', () => {
@@ -124,7 +158,7 @@ test('Meta and TikTok external targets fail closed while owned Meta care remains
   }
 
   for (const platform of ['instagram', 'facebook']) {
-    const capability = capabilityFor({ platform, action: 'comment', targetScope: 'owned' });
+    const capability = capabilityFor({ platform, action: 'reply', targetScope: 'owned' });
     assert.equal(capability.status, 'READY', platform);
     const pack = buildContextPack(contextFor(platform, 'owned'), DEFAULT_PROFILE);
     const gate = evaluateCandidate(usefulCandidate, pack, DEFAULT_PROFILE);
@@ -149,7 +183,11 @@ test('demo generation changes comment shape by platform instead of reusing one c
 
 test('YouTube context declares missing caption authorization instead of inventing a transcript', async () => {
   const result = await fetchAuthorizedTranscript({ videoId: 'demo-context', accessToken: '' });
-  assert.deepEqual(result, { text: '', status: 'oauth_not_configured', source: null });
+  assert.equal(result.text, '');
+  assert.equal(result.status, 'oauth_not_configured');
+  assert.equal(result.source, null);
+  assert.deepEqual(result.segments, []);
+  assert.equal(result.transcriptProvenance, null);
 });
 
 test('system errors never become source evidence', () => {

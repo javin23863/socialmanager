@@ -35,6 +35,7 @@ The app runs outside Codex as a local desktop workspace. The operator can set or
 - Reject generic, repetitive, self-promotional, unsupported, unsafe, or context-poor copy before any public write.
 - Route actions only through provider capabilities that are explicitly declared and authorized; unsupported or policy-sensitive routes fail closed and remain visible.
 - Execute with per-platform and per-account budgets, cooldowns, deduplication, idempotency, retry classification, and provider read-back receipts.
+- Connect YouTube through a system-browser desktop OAuth flow using PKCE and the smallest comment scope; refresh, rotation, revocation, and reconnect state remain inside the main process and OS-protected storage.
 - Keep credentials in the local OS credential store or an explicitly configured local secret mechanism; never write secrets into the repository, run receipts, or model transcript.
 - Treat viral reach as an optimization target, never as a guaranteed claim. Measure conversation quality and downstream results instead of maximizing raw action count.
 

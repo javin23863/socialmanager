@@ -16,6 +16,7 @@ This record is derived from the shipped Electron renderer on 2026-08-20. Product
 - Evidence anchors are rendered as source chips; the candidate route carries its evidence chips into the selected state; gate rows show a marker, reason, and explicit PASS/BLOCK result.
 - The gate field keeps deterministic anti-slop and independent model-critic verdicts separate; an unperformed critic is visibly held rather than rendered as a green live-ready state.
 - Capability rows expose the platform route, scope, surface limits, source snapshot, and the difference between documented platform values and studio quality ceilings.
+- The YouTube connection panel exposes the requested comment scope and non-secret connection status; authorization happens in the system browser and returns through a PKCE-protected loopback callback.
 
 ## Interaction and state language
 
@@ -25,6 +26,7 @@ This record is derived from the shipped Electron renderer on 2026-08-20. Product
 - Simulation is always available for a passing candidate. Live execution requires the configured autonomy policy, the live-write arm, an official adapter, idempotency, and exact provider read-back.
 - Live execution additionally requires the separately configured critic model to return `PASS` for every candidate; `NOT_PERFORMED` is simulation-only.
 - Pause is a global kill switch. Reduced-motion media rules keep state transitions legible without animation.
+- `AUTHORIZING`, `CONNECTED`, `CONFIGURED`, `ERROR`, and `DISCONNECTED` are explicit connection states; no access or refresh token is rendered.
 
 ## Responsive and accessibility rules
 
