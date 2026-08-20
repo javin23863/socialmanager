@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https: http://localhost:* https://localhost:*; object-src 'none'; base-uri 'none'; form-action 'self';">
+    <title>Social Engagement Studio</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <!--
+    THESIS: Make the evidence-to-comment route visible so autonomous execution feels accountable rather than magical.
+    OWN-WORLD: A cool graphite field with paper-white evidence sheets, cobalt route marks, oxidized-green passes, and amber holds.
+    STORY: The operator sees the source, the candidate, the exact gate verdict, and the receipt in one bounded run.
+    FIRST VIEWPORT: A narrow policy rail frames a three-column atlas: source evidence on the left, candidate route in the center, and gates/capabilities on the right; RUN CYCLE is the primary action in the top bar.
+    FORM: Context atlas, third of the grounded directions; evidence is terrain and the generated comment is a route through it.
+    FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
+    <div id="app-shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <div class="brand-name">Social Engagement Studio</div>
+            <div class="brand-subtitle">CONTEXT ATLAS / BOUNDED ENGAGEMENT</div>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <div class="run-state" id="run-state" role="status" aria-live="polite">
+            <span class="status-dot status-neutral"></span>
+            <span>LOADING STATE</span>
+          </div>
+          <button class="button button-quiet" id="kill-switch" type="button">PAUSE AUTONOMY</button>
+          <button class="button button-primary" id="run-cycle" type="button">RUN YOUTUBE NICHE CYCLE</button>
+        </div>
+      </header>
+
+      <div class="app-grid">
+        <aside class="control-rail" aria-label="Workspace controls">
+          <section class="rail-section rail-section-intro">
+            <p class="rail-label">WORKSPACE</p>
+            <h1>Target the conversation, not the feed.</h1>
+            <p class="rail-copy">A passing gate is the action approval. Routine eligible work can run without a per-post prompt.</p>
+          </section>
+
+          <section class="rail-section">
+            <div class="section-heading-row">
+              <h2>Run policy</h2>
+              <span class="mini-state" id="policy-state">OFF</span>
+            </div>
+            <label class="switch-row" for="autonomy-enabled">
+              <span>Auto-run passing target</span>
+              <input id="autonomy-enabled" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <label class="switch-row" for="live-writes-enabled">
+              <span>Arm live writes</span>
+              <input id="live-writes-enabled" type="checkbox">
+              <span class="switch" aria-hidden="true"></span>
+            </label>
+            <p class="field-note" id="write-note">Simulation receipts only until an official adapter and scope are configured.</p>
+            <label class="field-label" for="discovery-query">YouTube discovery query</label>
+            <input class="field-input" id="discovery-query" type="text" placeholder="market structure|liquidity|breadth" autocomplete="off">
+            <div class="policy-grid">
+              <label class="field-label" for="max-per-run">Per run<input class="field-input" id="max-per-run" type="number" min="1" max="10"></label>
+              <label class="field-label" for="max-per-day">Per 24h<input class="field-input" id="max-per-day" type="number" min="1" max="50"></label>
+              <label class="field-label" for="lookback-days">Lookback days<input class="field-input" id="lookback-days" type="number" min="1" max="30"></label>
+              <label class="field-label" for="target-cooldown">Target cooldown h<input class="field-input" id="target-cooldown" type="number" min="1" max="2160"></label>
+              <label class="field-label" for="account-cooldown">Account cooldown h<input class="field-input" id="account-cooldown" type="number" min="1" max="720"></label>
+              <label class="field-label" for="minimum-score">Minimum score<input class="field-input" id="minimum-score" type="number" min="60" max="100"></label>
+            </div>
+          </section>
+
+          <section class="rail-section">
+            <div class="section-heading-row">
+              <h2>Audience profile</h2>
+              <button class="text-button" id="save-profile" type="button">SAVE</button>
+            </div>
+            <label class="field-label" for="profile-name">Profile name</label>
+            <input class="field-input" id="profile-name" type="text" autocomplete="off">
+            <label class="field-label" for="niche-terms">Niche terms</label>
+            <textarea class="field-input field-textarea" id="niche-terms" rows="3" spellcheck="false"></textarea>
+            <label class="field-label" for="audience-needs">Audience needs</label>
+            <textarea class="field-input field-textarea" id="audience-needs" rows="3"></textarea>
+            <label class="field-label" for="preferred-language">Preferred language</label>
+            <input class="field-input" id="preferred-language" type="text" placeholder="en" autocomplete="off">
+            <label class="field-label" for="owned-channel-ids">Owned channel IDs <span class="label-hint">excluded from discovery</span></label>
+            <input class="field-input" id="owned-channel-ids" type="text" placeholder="UC… , UC…" autocomplete="off">
+            <label class="field-label" for="allowed-channel-ids">Allowed channel IDs <span class="label-hint">optional allowlist</span></label>
+            <input class="field-input" id="allowed-channel-ids" type="text" placeholder="leave blank for all eligible channels" autocomplete="off">
+            <label class="field-label" for="excluded-channel-ids">Blocked channel IDs</label>
+            <input class="field-input" id="excluded-channel-ids" type="text" placeholder="UC… , UC…" autocomplete="off">
+            <label class="field-label" for="excluded-keywords">Excluded target words</label>
+            <input class="field-input" id="excluded-keywords" type="text" placeholder="giveaway, politics, unrelated" autocomplete="off">
+          </section>
+
+          <section class="rail-section">
+            <div class="section-heading-row">
+              <h2>Model adapter</h2>
+              <button class="text-button" id="save-provider" type="button">SAVE</button>
+            </div>
+            <label class="field-label" for="provider-kind">Route</label>
+            <select class="field-input" id="provider-kind">
+              <option value="demo">Local demo</option>
+              <option value="openai-compatible">OpenAI-compatible HTTP</option>
+            </select>
+            <label class="field-label" for="provider-name">Display name</label>
+            <input class="field-input" id="provider-name" type="text" autocomplete="off">
+            <label class="field-label" for="provider-base-url">Base URL</label>
+            <input class="field-input" id="provider-base-url" type="url" placeholder="https://.../v1" autocomplete="off">
+            <label class="field-label" for="provider-model">Model</label>
+            <input class="field-input" id="provider-model" type="text" placeholder="model-id" autocomplete="off">
+            <label class="field-label" for="provider-critic-model">Independent critic model</label>
+            <input class="field-input" id="provider-critic-model" type="text" placeholder="critic-model-id" autocomplete="off">
+            <p class="field-note">Live execution requires a separate critic call that returns PASS for every candidate. Leave it blank for simulation-only mode.</p>
+            <label class="field-label" for="provider-key">API key <span class="label-hint">optional for local models</span></label>
+            <input class="field-input" id="provider-key" type="password" placeholder="leave blank to keep stored key" autocomplete="new-password">
+            <p class="field-note" id="provider-status">No key configured. Demo route is active.</p>
+            <button class="button button-secondary button-wide" id="test-provider" type="button">TEST MODEL ROUTE</button>
+          </section>
+
+          <section class="rail-section">
+            <div class="section-heading-row">
+              <h2>YouTube connection</h2>
+              <button class="text-button" id="save-youtube" type="button">SAVE</button>
+            </div>
+            <label class="field-label" for="youtube-api-key">Data API key</label>
+            <input class="field-input" id="youtube-api-key" type="password" placeholder="optional for URL hydration" autocomplete="new-password">
+            <label class="field-label" for="youtube-access-token">OAuth access token</label>
+            <input class="field-input" id="youtube-access-token" type="password" placeholder="optional for live comment writes" autocomplete="new-password">
+            <p class="field-note" id="youtube-status">No YouTube credentials configured.</p>
+          </section>
+        </aside>
+
+        <main class="workbench" aria-label="Engagement workspace">
+          <section class="workspace-heading">
+            <div>
+              <p class="eyebrow">RUN 0001 / SOURCE TO RECEIPT</p>
+              <h2>Make the next useful move.</h2>
+              <p class="workspace-copy">The engine binds each candidate to the source detail that earned it. Generic copy never reaches the action seam.</p>
+            </div>
+            <div class="heading-metrics" aria-label="Current run metrics">
+              <div><span class="metric-value" id="metric-candidates">0</span><span class="metric-label">candidates</span></div>
+              <div><span class="metric-value" id="metric-passing">0</span><span class="metric-label">passing</span></div>
+              <div><span class="metric-value" id="metric-receipts">0</span><span class="metric-label">receipts</span></div>
+            </div>
+          </section>
+
+          <div class="atlas-grid">
+            <section class="atlas-panel source-panel" aria-labelledby="source-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-kicker">01 / SOURCE FIELD</p>
+                  <h3 id="source-heading">Context input</h3>
+                </div>
+                <span class="panel-status" id="source-status">DEMO FIXTURE</span>
+              </div>
+              <form id="context-form">
+                <div class="field-grid-two">
+                  <div>
+                    <label class="field-label" for="context-platform">Platform</label>
+                    <select class="field-input" id="context-platform">
+                      <option value="youtube">YouTube</option>
+                      <option value="instagram">Instagram</option>
+                      <option value="facebook">Facebook</option>
+                      <option value="tiktok">TikTok</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label" for="context-scope">Target scope</label>
+                    <select class="field-input" id="context-scope">
+                      <option value="external">External niche account</option>
+                      <option value="owned">Owned account / community care</option>
+                    </select>
+                  </div>
+                </div>
+                <label class="field-label" for="context-url">Source URL / post URL</label>
+                <div class="input-action-row">
+                  <input class="field-input" id="context-url" type="url" autocomplete="off">
+                  <button class="button button-secondary" id="hydrate-youtube" type="button">HYDRATE YOUTUBE</button>
+                </div>
+                <label class="field-label" for="context-title">Title</label>
+                <input class="field-input" id="context-title" type="text" autocomplete="off">
+                <label class="field-label" for="context-description">Description / caption</label>
+                <textarea class="field-input field-textarea" id="context-description" rows="4"></textarea>
+                <label class="field-label" for="context-transcript">Transcript / spoken context</label>
+                <textarea class="field-input field-textarea" id="context-transcript" rows="4"></textarea>
+                <label class="field-label" for="context-visual">Visual notes</label>
+                <textarea class="field-input field-textarea" id="context-visual" rows="3" placeholder="What is visibly happening in the video?"></textarea>
+                <label class="field-label" for="context-comments">Conversation sample <span class="label-hint">one comment per line</span></label>
+                <textarea class="field-input field-textarea" id="context-comments" rows="4"></textarea>
+                <button class="button button-primary button-wide" id="analyze-context" type="submit">ANALYZE CONTEXT</button>
+              </form>
+
+              <div class="platform-contract" id="platform-contract" aria-live="polite"></div>
+
+              <div class="evidence-block">
+                <div class="section-heading-row">
+                  <h4>Evidence anchors</h4>
+                  <span class="mini-state" id="anchor-count">0</span>
+                </div>
+                <div class="chip-list" id="anchor-list"></div>
+              </div>
+              <div class="source-footnote" id="source-footnote">Synthetic fixture. Replace with an authorized source bundle before live execution.</div>
+            </section>
+
+            <section class="atlas-panel route-panel" aria-labelledby="route-heading">
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-kicker">02 / COMMENT ROUTE</p>
+                  <h3 id="route-heading">Candidate field</h3>
+                </div>
+                <span class="panel-status panel-status-blue" id="provider-badge">LOCAL DEMO</span>
+              </div>
+              <div class="candidate-list" id="candidate-list" aria-live="polite"></div>
+              <div class="selected-route" id="selected-route">
+                <div class="selected-route-header">
+                  <div>
+                    <p class="panel-kicker">SELECTED ROUTE</p>
+                    <span class="route-mode" id="selected-mode">WAITING FOR ANALYSIS</span>
+                  </div>
+                  <span class="score-badge" id="selected-score">--</span>
+                </div>
+                <p class="selected-copy" id="selected-copy">Run the analyzer to build a context-bound comment route.</p>
+                <div class="selected-evidence" id="selected-evidence"></div>
+                <div class="route-actions">
+                  <button class="button button-secondary" id="simulate-selected" type="button" disabled>SIMULATE RECEIPT</button>
+                  <button class="button button-primary" id="execute-selected" type="button" disabled>AUTO-EXECUTE PASS</button>
+                </div>
+                <p class="field-note" id="execution-note">Simulation is local. Live execution requires an armed policy and an official adapter.</p>
+              </div>
+            </section>
+          </div>
+
+          <section class="model-console atlas-panel" aria-labelledby="console-heading">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">MODEL CONSOLE</p>
+                <h3 id="console-heading">Ask the configured model</h3>
+              </div>
+              <span class="panel-status">EVIDENCE BOUND</span>
+            </div>
+            <div class="console-log" id="console-log" aria-live="polite">
+              <div class="console-line console-system">The model sees the current context pack as source data. It cannot change policy or invoke a provider.</div>
+            </div>
+            <form class="console-form" id="console-form">
+              <label class="sr-only" for="console-input">Message for the configured model</label>
+              <input class="field-input" id="console-input" type="text" placeholder="Ask what the strongest evidence anchor is…" autocomplete="off">
+              <button class="button button-secondary" type="submit">SEND</button>
+            </form>
+          </section>
+        </main>
+
+        <aside class="inspection-rail" aria-label="Gate and receipt inspection">
+          <section class="inspection-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">03 / GATE FIELD</p>
+                <h3>Copy verdict</h3>
+              </div>
+              <span class="gate-badge gate-neutral" id="gate-verdict">WAITING</span>
+            </div>
+            <div class="gate-list" id="gate-list"></div>
+          </section>
+
+          <section class="inspection-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">CAPABILITY MAP</p>
+                <h3>Provider truth</h3>
+              </div>
+            </div>
+            <div class="capability-list" id="capability-list"></div>
+          </section>
+
+          <section class="inspection-section receipt-section">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">RECEIPT LEDGER</p>
+                <h3>Latest action state</h3>
+              </div>
+              <span class="mini-state" id="ledger-count">0</span>
+            </div>
+            <div class="ledger-list" id="ledger-list"></div>
+          </section>
+
+          <section class="inspection-section exception-section">
+            <p class="panel-kicker">FAIL-CLOSED NOTES</p>
+            <ul class="note-list">
+              <li>Unsupported proactive platform routes stay visible and blocked.</li>
+              <li>A network-accepted write without exact read-back is UNKNOWN.</li>
+              <li>Automated likes are not treated as a growth shortcut.</li>
+            </ul>
+          </section>
+        </aside>
+      </div>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>
