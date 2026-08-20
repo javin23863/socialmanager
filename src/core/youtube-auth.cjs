@@ -5,12 +5,17 @@ const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const REVOKE_ENDPOINT = 'https://oauth2.googleapis.com/revoke';
 const YOUTUBE_COMMENT_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
+// Public desktop-client identifier for the operator's existing Google Cloud project.
+// Desktop OAuth clients do not use this value as a secret; the refresh grant remains
+// in Electron safeStorage and the user still completes Google's authorization screen.
+const DEFAULT_YOUTUBE_OAUTH_CLIENT_ID = '462706233859-i779n7dgqvokq2lval3j3cml3j2es3pd.apps.googleusercontent.com';
 const REFRESH_SKEW_MS = 60_000;
 
-function oauthError(code, status = 0) {
+function oauthError(code, status = 0, providerDescription = '') {
   const error = new Error(`YouTube OAuth ${code}`);
   error.code = code;
   error.status = status;
+  error.providerDescription = String(providerDescription || '').replace(/[\r\n]+/g, ' ').slice(0, 180);
   return error;
 }
 
@@ -84,7 +89,7 @@ async function tokenRequest(body, fetchImpl = globalThis.fetch) {
     throw oauthError('oauth_network_error');
   }
   const payload = await readJson(response);
-  if (!response.ok || payload.error) throw oauthError(mapProviderError(response.status, payload), response.status);
+  if (!response.ok || payload.error) throw oauthError(mapProviderError(response.status, payload), response.status, payload.error_description || payload.error);
   return payload;
 }
 
@@ -257,6 +262,7 @@ module.exports = {
   TOKEN_ENDPOINT,
   REVOKE_ENDPOINT,
   YOUTUBE_COMMENT_SCOPE,
+  DEFAULT_YOUTUBE_OAUTH_CLIENT_ID,
   REFRESH_SKEW_MS,
   createPkcePair,
   buildAuthorizationUrl,

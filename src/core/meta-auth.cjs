@@ -9,20 +9,23 @@ const {
 const META_API_VERSION = 'v26.0';
 const META_AUTH_ENDPOINT = 'https://www.facebook.com';
 const META_GRAPH_ENDPOINT = 'https://graph.facebook.com';
+// Public App ID for the operator's existing Meta developer app. The App Secret is
+// intentionally not bundled and remains an OS-protected, one-time setup value.
+const DEFAULT_META_APP_ID = '1415836063940108';
 const META_PERMISSIONS = [
   'pages_show_list',
   'pages_read_engagement',
-  'pages_manage_engagement',
-  'pages_read_user_content',
-  'pages_manage_metadata',
+  'business_management',
   'instagram_basic',
+  'instagram_content_publish',
   'instagram_manage_comments',
 ];
 
-function metaError(code, status = 0) {
+function metaError(code, status = 0, providerDescription = '') {
   const error = new Error(`Meta OAuth ${code}`);
   error.code = code;
   error.status = status;
+  error.providerDescription = String(providerDescription || '').replace(/[\r\n]+/g, ' ').slice(0, 180);
   return error;
 }
 
@@ -69,6 +72,10 @@ function providerCode(payload, status) {
   return 'meta_request_failed';
 }
 
+function providerDescription(payload) {
+  return String(payload?.error?.message || payload?.error?.type || payload?.error?.code || '').replace(/[\r\n]+/g, ' ').slice(0, 180);
+}
+
 async function metaRequest(url, { fetchImpl = globalThis.fetch, method = 'GET', accessToken = '' } = {}) {
   if (typeof fetchImpl !== 'function') throw metaError('runtime_unavailable');
   let response;
@@ -84,7 +91,7 @@ async function metaRequest(url, { fetchImpl = globalThis.fetch, method = 'GET', 
     throw metaError('network_error');
   }
   const payload = await readJson(response);
-  if (!response.ok || payload.error) throw metaError(providerCode(payload, response.status), response.status);
+  if (!response.ok || payload.error) throw metaError(providerCode(payload, response.status), response.status, providerDescription(payload));
   return payload;
 }
 
@@ -136,13 +143,16 @@ async function authorizeMetaDesktop({ appId, appSecret, apiVersion = META_API_VE
       reject(metaError('loopback_bind_failed'));
     };
     server.once('error', onError);
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, 'localhost', () => {
       server.removeListener('error', onError);
       resolve();
     });
   });
   const address = server.address();
-  const redirectUri = `http://127.0.0.1:${address.port}`;
+  // Meta's development OAuth policy permits the named localhost loopback
+  // redirect while its current Enforce HTTPS setting rejects the IP-literal
+  // form before the consent screen. The server remains bound to loopback.
+  const redirectUri = `http://localhost:${address.port}/`;
   const authorizationUrl = buildMetaAuthorizationUrl({ appId, redirectUri, state, codeChallenge: pkce.challenge, apiVersion });
   const callback = waitForLoopbackCallback(server, redirectUri, state, timeoutMs);
   try {
@@ -155,7 +165,7 @@ async function authorizeMetaDesktop({ appId, appSecret, apiVersion = META_API_VE
     const result = await callback.promise;
     return exchangeMetaCode({ appId, appSecret, redirectUri, code: result.code, codeVerifier: pkce.verifier, apiVersion, fetchImpl });
   } catch (error) {
-    const wrapped = metaError(String(error?.code || 'authorization_failed'));
+    const wrapped = metaError(String(error?.code || 'authorization_failed'), Number(error?.status || 0), error?.providerDescription);
     wrapped.status = Number(error?.status || 0);
     throw wrapped;
   }
@@ -203,6 +213,7 @@ async function fetchManagedAccounts({ accessToken, apiVersion = META_API_VERSION
 
 module.exports = {
   META_API_VERSION,
+  DEFAULT_META_APP_ID,
   META_AUTH_ENDPOINT,
   META_GRAPH_ENDPOINT,
   META_PERMISSIONS,

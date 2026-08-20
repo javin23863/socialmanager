@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict');
+const http = require('node:http');
 const test = require('node:test');
 const {
   META_API_VERSION,
+  DEFAULT_META_APP_ID,
   META_PERMISSIONS,
+  authorizeMetaDesktop,
   buildMetaAuthorizationUrl,
   fetchManagedAccounts,
   normalizeManagedAccounts,
@@ -16,6 +19,21 @@ const {
   executeFacebookAction,
 } = require('../src/core/meta.cjs');
 
+test('the standalone app ships the existing public Meta App ID', () => {
+  assert.match(DEFAULT_META_APP_ID, /^\d+$/);
+});
+
+test('Meta scopes match the configured Instagram API with Facebook login use case', () => {
+  assert.deepEqual(new Set(META_PERMISSIONS), new Set([
+    'pages_show_list',
+    'pages_read_engagement',
+    'business_management',
+    'instagram_basic',
+    'instagram_content_publish',
+    'instagram_manage_comments',
+  ]));
+});
+
 test('Meta authorization URL uses the pinned Graph version, loopback redirect, and community-care permissions', () => {
   const url = buildMetaAuthorizationUrl({
     appId: '12345',
@@ -28,6 +46,32 @@ test('Meta authorization URL uses the pinned Graph version, loopback redirect, a
   assert.equal(url.searchParams.get('redirect_uri'), 'http://127.0.0.1:43210');
   assert.equal(url.searchParams.get('code_challenge_method'), 'S256');
   assert.deepEqual(url.searchParams.get('scope').split(','), META_PERMISSIONS);
+});
+
+test('Meta desktop OAuth keeps the localhost redirect identical through callback and token exchange', async () => {
+  let authorizationUrl;
+  const tokenRequests = [];
+  const result = await authorizeMetaDesktop({
+    appId: '12345',
+    appSecret: 'app-secret',
+    openExternal: async (url) => {
+      authorizationUrl = new URL(url);
+      const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
+      const callbackUrl = new URL(redirectUri);
+      callbackUrl.searchParams.set('code', 'authorization-code');
+      callbackUrl.searchParams.set('state', authorizationUrl.searchParams.get('state'));
+      http.get(callbackUrl, (response) => response.resume());
+    },
+    fetchImpl: async (url) => {
+      tokenRequests.push(new URL(url));
+      if (tokenRequests.length === 1) return new Response(JSON.stringify({ access_token: 'short-token', expires_in: 3600 }), { status: 200 });
+      return new Response(JSON.stringify({ access_token: 'long-token', expires_in: 3600 }), { status: 200 });
+    },
+  });
+  const redirectUri = authorizationUrl.searchParams.get('redirect_uri');
+  assert.match(redirectUri, /^http:\/\/localhost:\d+\/$/);
+  assert.equal(tokenRequests[0].searchParams.get('redirect_uri'), redirectUri);
+  assert.equal(result.accessToken, 'long-token');
 });
 
 test('Meta token and managed-account normalization retains identities without exposing secrets to public records', () => {

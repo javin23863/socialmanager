@@ -34,6 +34,12 @@
 
   function setValue(id, value) { $(id).value = value || ''; }
 
+  function displayTime(value) {
+    if (!value) return 'not yet';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'not yet' : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
   function populateForms() {
     const { profile, provider, context, execution, youtube, meta } = view.state;
     setValue('profile-name', profile.name);
@@ -56,6 +62,11 @@
     $('youtube-oauth-client-secret').value = '';
     $('autonomy-enabled').checked = Boolean(execution.autonomyEnabled);
     $('live-writes-enabled').checked = Boolean(execution.liveWritesEnabled);
+    setValue('automation-interval', execution.cycleIntervalMinutes || 60);
+    ['youtube', 'instagram', 'facebook'].forEach((platform) => {
+      const control = $(`automation-${platform}`);
+      if (control) control.checked = (execution.enabledPlatforms || []).includes(platform);
+    });
     setValue('max-per-run', execution.maxCommentsPerRun);
     setValue('max-per-day', execution.maxCommentsPer24Hours);
     setValue('lookback-days', execution.discoveryLookbackDays);
@@ -84,23 +95,29 @@
         : `Generation: ${provider.model || 'unset'} · critic: ${provider.criticModel || 'not configured'} · keyless route configured; local models may not need a key.`;
     const oauthStatus = String(youtube.oauthStatus || 'disconnected').toUpperCase();
     const grantedScope = (youtube.grantedScopes || []).includes('https://www.googleapis.com/auth/youtube.force-ssl');
-    $('youtube-status').textContent = youtube.apiKeyConfigured || youtube.oauthClientIdConfigured
-      ? `Data API ${youtube.apiKeyConfigured ? 'ready' : 'missing'} / OAuth ${oauthStatus}${grantedScope ? ' · comment scope granted' : ' · required scope not granted'}.${youtube.oauthStatusReason ? ` ${youtube.oauthStatusReason}.` : ''}`
-      : 'No YouTube credentials configured.';
+    $('youtube-status').textContent = oauthStatus === 'CONNECTED'
+      ? `OAuth connected · Data API ${youtube.contextAccess === 'oauth' ? 'uses the connected grant' : 'fallback key ready'}${grantedScope ? ' · comment scope granted' : ''}.`
+      : youtube.oauthClientSecretRequired && !youtube.oauthClientSecretConfigured
+        ? 'OAuth client detected · enter the client secret once, save, then connect the signed-in YouTube account.'
+        : youtube.oauthClientSecretRequired && youtube.oauthClientSecretConfigured
+          ? 'OAuth client and secret saved · connect the signed-in YouTube account once to authorize the worker.'
+      : youtube.apiKeyConfigured
+        ? `Data API key ready · OAuth ${oauthStatus}${grantedScope ? ' · comment scope granted' : ' · connect for comments and autonomous writes'}.`
+        : `OAuth client ready · connect YouTube to authorize discovery, context, and comments.${youtube.oauthStatusReason ? ` ${youtube.oauthStatusReason}.` : ''}`;
     $('youtube-scope').textContent = `Requested scope: ${(youtube.requestedScopes || ['https://www.googleapis.com/auth/youtube.force-ssl']).join(', ')}. ${youtube.credentialStorage || 'OS-protected credential storage'}.`;
-    $('connect-youtube').disabled = !youtube.oauthClientIdConfigured || oauthStatus === 'AUTHORIZING';
+    $('connect-youtube').disabled = !youtube.oauthClientIdConfigured || (youtube.oauthClientSecretRequired && !youtube.oauthClientSecretConfigured) || oauthStatus === 'AUTHORIZING';
     $('disconnect-youtube').disabled = !youtube.oauthReady && oauthStatus === 'DISCONNECTED';
     setValue('meta-app-id', meta?.appId || '');
     setValue('meta-graph-version', meta?.graphApiVersion || 'v26.0');
     $('meta-app-secret').value = '';
     const metaStatus = String(meta?.status || 'disconnected').toUpperCase();
-    $('meta-status').textContent = meta?.appIdConfigured
+    $('meta-status').textContent = meta?.appIdConfigured && meta?.appSecretConfigured
       ? `Meta OAuth ${metaStatus}${meta?.statusReason ? ` · ${meta.statusReason}` : ''}. ${view.state.accounts?.filter((account) => ['facebook', 'instagram'].includes(account.platform) && account.status === 'connected').length || 0} actor accounts registered.`
-      : 'No Meta credentials configured.';
+      : 'Meta app detected · add the App Secret once to authorize managed Page and Instagram accounts.';
     $('meta-permissions').textContent = meta?.permissions?.length
       ? `Granted/requested permissions: ${meta.permissions.join(', ')}.`
       : 'Community permissions are not configured.';
-    $('connect-meta').disabled = !meta?.appIdConfigured || metaStatus === 'AUTHORIZING';
+    $('connect-meta').disabled = !meta?.appIdConfigured || !meta?.appSecretConfigured || metaStatus === 'AUTHORIZING';
     $('disconnect-meta').disabled = !meta?.appIdConfigured && metaStatus === 'DISCONNECTED';
     renderAccounts();
     renderReconciliation();
@@ -109,7 +126,49 @@
     renderExemplars();
     renderStorageStatus();
     renderPlatformContract(context.platform || 'youtube', context.targetScope || 'external');
+    renderAutomation();
     renderPolicy();
+  }
+
+  function renderAutomation() {
+    const execution = view.state.execution || {};
+    const automation = view.state.automation || {};
+    const runtime = view.state.platformRuntime || {};
+    const status = String(automation.status || (execution.autonomyEnabled ? 'STARTING' : 'DISABLED')).toUpperCase();
+    const statusNode = $('automation-status');
+    if (statusNode) {
+      statusNode.textContent = status;
+      statusNode.className = `mini-state automation-state-${status.toLowerCase()}`;
+    }
+    const copy = $('automation-status-copy');
+    if (copy) {
+      const last = automation.lastRun;
+      copy.textContent = status === 'RUNNING'
+        ? `Running ${automation.currentPlatform ? automation.currentPlatform.toUpperCase() : 'enabled surfaces'} sequentially. No overlapping cycle will start.`
+        : last
+          ? `Last run ${displayTime(last.finishedAt)} · ${last.completedActions || 0} completed action(s) across ${(last.platforms || []).length} surface(s).`
+          : execution.autonomyEnabled
+            ? 'Worker is enabled and will run the configured surfaces automatically.'
+            : 'Enable the worker once; it will run the enabled surfaces sequentially and resume after restart.';
+    }
+    ['youtube', 'instagram', 'facebook'].forEach((platform) => {
+      const node = $(`automation-${platform}-state`);
+      const item = runtime[platform];
+      if (!node) return;
+      node.textContent = item?.ready ? `${item.mode.toUpperCase()} READY` : `BLOCKED · ${item?.reason || 'not configured'}`;
+      node.className = `automation-surface-state ${item?.ready ? 'automation-surface-ready' : 'automation-surface-blocked'}`;
+      node.title = item?.reasons?.join(' · ') || item?.reason || '';
+    });
+    const next = $('automation-next-run');
+    if (next) {
+      next.textContent = automation.nextRunAt
+        ? `Next automatic run: ${displayTime(automation.nextRunAt)}.`
+        : status === 'PAUSED'
+          ? 'Automatic runs are paused by the kill switch.'
+          : status === 'DISABLED'
+            ? 'No automatic run scheduled.'
+            : 'Finishing the current run before scheduling the next one.';
+    }
   }
 
   function renderPolicy() {
@@ -118,9 +177,12 @@
     const accountReady = (accounts || []).some((account) => account.status === 'connected' && account.capabilities?.comment);
     const buildReady = view.state.buildMetadata?.applicationCommit && view.state.buildMetadata.applicationCommit !== 'unknown' && !view.state.buildMetadata.buildDirty;
     const liveDependenciesReady = provider.kind === 'openai-compatible' && Boolean(provider.criticModel) && (Boolean(youtube.oauthReady) || meta?.status === 'connected') && accountReady && buildReady;
-    $('policy-state').textContent = execution.paused ? 'PAUSED' : execution.autonomyEnabled ? 'ON' : 'OFF';
-    $('policy-state').style.color = execution.paused ? 'var(--red)' : execution.autonomyEnabled ? 'var(--green)' : 'var(--muted)';
+    const workerStatus = String(view.state.automation?.status || '').toUpperCase();
+    $('policy-state').textContent = execution.paused ? 'PAUSED' : workerStatus === 'RUNNING' ? 'RUNNING' : execution.autonomyEnabled ? 'ON' : 'OFF';
+    $('policy-state').style.color = execution.paused ? 'var(--red)' : workerStatus === 'RUNNING' ? 'var(--cobalt)' : execution.autonomyEnabled ? 'var(--green)' : 'var(--muted)';
     $('kill-switch').textContent = execution.paused ? 'RESUME AUTONOMY' : 'PAUSE AUTONOMY';
+    $('run-cycle').disabled = !execution.autonomyEnabled || execution.paused;
+    $('run-selected-cycle').disabled = !execution.autonomyEnabled || execution.paused;
     $('write-note').textContent = execution.liveWritesEnabled && liveDependenciesReady
       ? 'Live writes are armed; official context, capability, budgets, gates, and exact read-back still apply.'
       : execution.liveWritesEnabled
@@ -129,13 +191,14 @@
           : 'Live writes are requested but unavailable until a real generation model, independent critic, connected actor account, and matching official provider route are configured.'
       : 'Simulation receipts only until an official adapter and scope are configured.';
     $('execute-selected').textContent = armed && execution.liveWritesEnabled ? 'AUTO-EXECUTE PASS' : 'RUN PASSING SIMULATION';
-    setRunState(execution.paused ? 'AUTONOMY PAUSED' : armed ? 'AUTONOMY ARMED' : 'OBSERVE MODE', execution.paused ? 'warn' : armed ? 'ok' : 'neutral');
+    setRunState(execution.paused ? 'AUTONOMY PAUSED' : workerStatus === 'RUNNING' ? 'AUTOMATION RUNNING' : workerStatus === 'SCHEDULED' ? 'AUTOMATION SCHEDULED' : armed ? 'AUTONOMY ARMED' : 'OBSERVE MODE', execution.paused ? 'warn' : workerStatus === 'RUNNING' ? 'warn' : armed ? 'ok' : 'neutral');
+    renderAutomation();
     if (view.analysis) renderSelected(candidateById(view.selectedId));
   }
 
   function updateCycleLabel() {
     const platform = $('cycle-platform').value;
-    $('run-cycle').textContent = platform === 'youtube'
+    $('run-selected-cycle').textContent = platform === 'youtube'
       ? 'RUN YOUTUBE NICHE CYCLE'
       : `RUN ${platform.toUpperCase()} OWNED CARE`;
   }
@@ -168,11 +231,13 @@
     const context = view.state.context;
     const sources = pack?.source?.contextSources || context.contextSources || [];
     renderPlatformContract(context.platform || 'youtube', context.targetScope || 'external');
-    $('source-status').textContent = sources.includes('demo_fixture') ? 'DEMO FIXTURE' : sources.some((source) => source.startsWith('youtube_data_api:') || source.startsWith('meta_api:')) ? 'OFFICIAL SOURCE' : 'MANUAL SOURCE';
+    $('source-status').textContent = sources.includes('empty_state') ? 'NO SOURCE' : sources.includes('demo_fixture') ? 'PREVIEW FIXTURE' : sources.some((source) => source.startsWith('youtube_data_api:') || source.startsWith('meta_api:')) ? 'OFFICIAL SOURCE' : 'MANUAL SOURCE';
     const ranking = pack?.source?.discoveryRanking;
     const rankingText = ranking ? ` Target rank ${ranking.score}/100; ${ranking.eligible ? 'eligible' : `filtered: ${ranking.exclusionReason}`}.` : '';
-    $('source-footnote').textContent = sources.includes('demo_fixture')
-      ? 'Synthetic fixture. Replace with an authorized source bundle before live execution.'
+    $('source-footnote').textContent = sources.includes('empty_state')
+      ? 'No source has been hydrated yet. Automatic cycles hydrate provider context themselves; this panel stays empty until a real target is selected.'
+      : sources.includes('demo_fixture')
+        ? 'Preview fixture. Replace with an authorized source bundle before live execution.'
       : `Sources: ${sources.join(' / ') || 'manual input'}.${rankingText} ${context.ownershipStatus ? `Ownership: ${context.ownershipStatus}. ` : ''}Manual changes require a new analysis and cannot impersonate official hydration.`;
     const anchors = pack?.anchors || [];
     $('anchor-count').textContent = String(anchors.length);
@@ -562,6 +627,35 @@
     }
   }
 
+  function applyAutomationResult(result) {
+    if (!result?.state) return;
+    view.state = result.state;
+    view.analysis = result.state.lastAnalysis || view.analysis;
+    view.selectedId = view.analysis?.selectedId || null;
+    view.contextDirty = false;
+    populateForms();
+    renderContext();
+    renderCandidates();
+  }
+
+  async function runAutomationNow() {
+    try {
+      setRunState('RUNNING ENABLED SURFACES', 'warn');
+      const result = await api.runAutomationNow();
+      applyAutomationResult(result);
+      view.ledger = await api.listLedger();
+      renderLedger();
+      (result.platforms || []).forEach((summary) => {
+        appendConsole(summary.status === 'COMPLETED' || summary.status === 'NO_OP' ? 'assistant' : 'error', `${summary.platform.toUpperCase()}: ${summary.status} · ${summary.completedActions} action(s)${summary.results?.[0]?.reason ? ` — ${summary.results[0].reason}` : ''}`);
+      });
+      setRunState(result.state?.execution?.paused ? 'CIRCUIT BREAKER PAUSED' : result.state?.automation?.status === 'SCHEDULED' ? 'AUTOMATION SCHEDULED' : 'AUTOMATION COMPLETE', result.state?.execution?.paused ? 'block' : 'ok');
+      notify(`Automation completed across ${(result.platforms || []).length} enabled surface(s); ${result.platforms?.reduce((total, item) => total + item.completedActions, 0) || 0} action(s) completed.`);
+    } catch (error) {
+      setRunState('AUTOMATION BLOCKED', 'block');
+      notify(errorMessage(error), true);
+    }
+  }
+
   async function runNicheCycle() {
     try {
       const platform = $('cycle-platform').value;
@@ -660,12 +754,12 @@
     $('youtube-api-key').value = '';
     $('youtube-oauth-client-secret').value = '';
     populateForms();
-    notify('YouTube connection settings saved. Connect through the system browser to authorize.');
+    notify('YouTube connection settings saved. Connect the prefilled desktop client once to authorize.');
   }
 
   async function connectYouTube() {
     try {
-      $('youtube-status').textContent = 'Opening the system browser for PKCE authorization…';
+      $('youtube-status').textContent = 'Opening the signed-in browser for PKCE authorization…';
       $('connect-youtube').disabled = true;
       view.state = await api.connectYouTube();
       populateForms();
@@ -696,12 +790,12 @@
     });
     $('meta-app-secret').value = '';
     populateForms();
-    notify('Meta connection settings saved. Connect through the system browser after app review and permissions are ready.');
+    notify('Meta connection settings saved. Connect once to authorize the managed Page and Instagram accounts.');
   }
 
   async function connectMeta() {
     try {
-      $('meta-status').textContent = 'Opening the system browser for Meta authorization…';
+      $('meta-status').textContent = 'Opening the signed-in browser for Meta authorization…';
       $('connect-meta').disabled = true;
       view.state = await api.connectMeta();
       populateForms();
@@ -776,6 +870,8 @@
     view.state = await api.saveExecution({
       autonomyEnabled: $('autonomy-enabled').checked,
       liveWritesEnabled: $('live-writes-enabled').checked,
+      cycleIntervalMinutes: $('automation-interval').value,
+      enabledPlatforms: ['youtube', 'instagram', 'facebook'].filter((platform) => $(`automation-${platform}`).checked),
       maxCommentsPerRun: $('max-per-run').value,
       maxCommentsPer24Hours: $('max-per-day').value,
       discoveryLookbackDays: $('lookback-days').value,
@@ -850,7 +946,8 @@
       renderSelected(candidateById(view.selectedId));
       setRunState('CONTEXT CHANGED', 'warn');
     });
-    $('run-cycle').addEventListener('click', runNicheCycle);
+    $('run-cycle').addEventListener('click', runAutomationNow);
+    $('run-selected-cycle').addEventListener('click', runNicheCycle);
     $('hydrate-youtube').addEventListener('click', hydrateYouTube);
     $('hydrate-meta').addEventListener('click', hydrateMeta);
     $('save-profile').addEventListener('click', saveProfile);
@@ -866,6 +963,8 @@
     $('inspect-media').addEventListener('click', inspectMedia);
     $('autonomy-enabled').addEventListener('change', saveExecution);
     $('live-writes-enabled').addEventListener('change', saveExecution);
+    $('automation-interval').addEventListener('change', saveExecution);
+    ['automation-youtube', 'automation-instagram', 'automation-facebook'].forEach((id) => $(id).addEventListener('change', saveExecution));
     ['max-per-run', 'max-per-day', 'lookback-days', 'target-cooldown', 'account-cooldown', 'minimum-score'].forEach((id) => $(id).addEventListener('change', saveExecution));
     $('kill-switch').addEventListener('click', togglePause);
     $('test-provider').addEventListener('click', testProvider);
@@ -874,12 +973,30 @@
     $('console-form').addEventListener('submit', sendChat);
   }
 
+  function listenForAutomationState() {
+    if (typeof api.onAutomationState !== 'function') return;
+    api.onAutomationState((nextState) => {
+      if (!nextState) return;
+      view.state = nextState;
+      if (nextState.lastAnalysis) {
+        view.analysis = nextState.lastAnalysis;
+        view.selectedId = view.analysis.selectedId || null;
+        view.contextDirty = false;
+        renderContext();
+        renderCandidates();
+      }
+      renderAutomation();
+      renderPolicy();
+    });
+  }
+
   async function init() {
     if (!api) {
       notify('The Electron preload bridge is unavailable.', true);
       return;
     }
     try {
+      listenForAutomationState();
       [view.state, view.capabilities, view.ledger] = await Promise.all([api.loadState(), api.listCapabilities(), api.listLedger()]);
       populateForms();
       renderCapabilities();

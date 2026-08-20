@@ -3,8 +3,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { BUILD_METADATA } = require('./core/build-metadata.cjs');
 const {
-  DEFAULT_CONTEXT,
   DEFAULT_PROFILE,
+  RUNTIME_DEFAULT_CONTEXT,
   PLATFORM_CAPABILITIES,
   capabilityFor,
   chatWithProvider,
@@ -20,13 +20,21 @@ const {
   assessExecutionPolicy,
   sha256,
 } = require('./core/engine.cjs');
+const {
+  AutomationRunner,
+  defaultAutomationRuntime,
+  normalizeAutomationExecution,
+  normalizeIntervalMinutes,
+  normalizePlatforms,
+} = require('./core/automation-runner.cjs');
 const { discoverVideos, fetchContext, executeComment, executeReply, fetchAuthorizedChannel, reconcileYouTubeComment } = require('./core/youtube.cjs');
 const { StudioStorage } = require('./core/storage.cjs');
-const { META_API_VERSION, META_PERMISSIONS, authorizeMetaDesktop, fetchManagedAccounts } = require('./core/meta-auth.cjs');
+const { META_API_VERSION, DEFAULT_META_APP_ID, META_PERMISSIONS, authorizeMetaDesktop, fetchManagedAccounts } = require('./core/meta-auth.cjs');
 const { createInstagramContext, createFacebookContext, executeInstagramAction, executeFacebookAction, reconcileMetaAction, listInstagramMedia, listFacebookMedia } = require('./core/meta.cjs');
 const { inspectAuthorizedMedia } = require('./core/media-understanding.cjs');
 const {
   YOUTUBE_COMMENT_SCOPE,
+  DEFAULT_YOUTUBE_OAUTH_CLIENT_ID,
   authorizeDesktop,
   refreshAccessToken,
   revokeToken,
@@ -38,10 +46,12 @@ let state;
 let stateFile;
 let ledgerFile;
 let storage;
+let automationRunner;
+let cycleInFlight = null;
 
 function ensureMetaState() {
   state.meta = {
-    appId: '',
+    appId: DEFAULT_META_APP_ID,
     appSecretCipher: null,
     graphApiVersion: META_API_VERSION,
     status: 'disconnected',
@@ -50,9 +60,27 @@ function ensureMetaState() {
     lastConnectedAt: null,
     ...state.meta,
   };
+  if (!String(state.meta.appId || '').trim()) state.meta.appId = DEFAULT_META_APP_ID;
   state.meta.graphApiVersion = /^v\d+\.\d+$/.test(String(state.meta.graphApiVersion || '')) ? String(state.meta.graphApiVersion) : META_API_VERSION;
   state.meta.permissions = Array.isArray(state.meta.permissions) ? state.meta.permissions.map((permission) => String(permission || '').trim()).filter(Boolean) : [];
   return state.meta;
+}
+
+function ensureAutomationState() {
+  state.automation = {
+    ...defaultAutomationRuntime(),
+    ...(state.automation || {}),
+  };
+  if (!Array.isArray(state.automation.lastRun?.platforms)) state.automation.lastRun = null;
+  return state.automation;
+}
+
+function isSyntheticContext(context) {
+  const sources = Array.isArray(context?.contextSources) ? context.contextSources : [];
+  return sources.includes('demo_fixture')
+    || String(context?.videoId || '') === 'demo-context'
+    || String(context?.channelId || '') === 'demo-channel'
+    || String(context?.url || '') === 'https://www.youtube.com/watch?v=demo-context';
 }
 
 function writeJson(file, value) {
@@ -165,7 +193,7 @@ function ensureYouTubeState() {
   const existing = state.youtube || {};
   state.youtube = {
     apiKeyCipher: null,
-    oauthClientId: '',
+    oauthClientId: DEFAULT_YOUTUBE_OAUTH_CLIENT_ID,
     oauthClientSecretCipher: null,
     accessTokenCipher: null,
     refreshTokenCipher: null,
@@ -177,6 +205,7 @@ function ensureYouTubeState() {
     lastTokenRefreshAt: null,
     ...existing,
   };
+  if (!String(state.youtube.oauthClientId || '').trim()) state.youtube.oauthClientId = DEFAULT_YOUTUBE_OAUTH_CLIENT_ID;
   state.youtube.grantedScopes = Array.isArray(state.youtube.grantedScopes)
     ? state.youtube.grantedScopes.map((scope) => String(scope || '').trim()).filter(Boolean)
     : [];
@@ -194,10 +223,17 @@ function oauthReason(error) {
   return String(error?.code || 'oauth_error').replace(/[^a-z0-9_]+/gi, '_').slice(0, 80) || 'oauth_error';
 }
 
+function youtubeClientSecretRequired(youtube = ensureYouTubeState()) {
+  return youtube.oauthClientId === DEFAULT_YOUTUBE_OAUTH_CLIENT_ID;
+}
+
 function oauthUserError(error) {
   const code = oauthReason(error);
+  const providerDescription = String(error?.providerDescription || '').replace(/[^a-z0-9 .,_:-]+/gi, ' ').trim().slice(0, 180);
+  const providerHint = providerDescription ? ` Provider response: ${providerDescription}.` : '';
   const messages = {
     oauth_client_missing: 'YouTube OAuth client ID is not configured.',
+    oauth_client_secret_missing: 'This YouTube desktop OAuth client requires its client secret. Enter it once and save the connection settings; it will remain OS-protected.',
     authorization_request_invalid: 'YouTube OAuth could not start because the authorization request is incomplete.',
     access_denied: 'YouTube authorization was declined. You can reconnect when ready.',
     oauth_timeout: 'YouTube authorization timed out. Reconnect to try again.',
@@ -207,6 +243,9 @@ function oauthUserError(error) {
     invalid_grant: 'YouTube authorization was revoked or expired. Reconnect to restore access.',
     invalid_client: 'The YouTube OAuth client configuration was rejected. Check the desktop client ID.',
     unauthorized_client: 'The YouTube OAuth client is not authorized for this desktop flow.',
+    invalid_request: `Google rejected the YouTube OAuth token request. Check the desktop client and loopback configuration.${providerHint}`,
+    redirect_uri_mismatch: 'Google rejected the loopback redirect. Use a Desktop OAuth client, not a Web client.',
+    invalid_scope: 'Google rejected the requested YouTube scope. Check the client and consent configuration.',
     oauth_network_error: 'YouTube authorization could not reach Google. Check the network and try again.',
     oauth_server_error: 'Google temporarily rejected the YouTube authorization request. Try again later.',
     oauth_request_failed: 'YouTube authorization failed. Reconnect to try again.',
@@ -300,7 +339,8 @@ async function connectMeta() {
     return publicState();
   } catch (error) {
     meta.status = 'error';
-    meta.statusReason = String(error?.code || 'meta_authorization_failed').replace(/[^a-z0-9_]+/gi, '_').slice(0, 100);
+    const providerDetail = String(error?.providerDescription || '').replace(/[\r\n]+/g, ' ').slice(0, 140);
+    meta.statusReason = `${String(error?.code || 'meta_authorization_failed').replace(/[^a-z0-9_]+/gi, '_').slice(0, 60)}${providerDetail ? `: ${providerDetail}` : ''}`.slice(0, 200);
     writeJson(stateFile, state);
     throw new Error('Meta authorization or managed-account discovery failed. Reconnect after checking app review, permissions, and account access.');
   }
@@ -336,7 +376,8 @@ function oauthReady() {
   const youtube = ensureYouTubeState();
   const connectedState = ['connected', 'configured'].includes(String(youtube.oauthStatus || ''));
   const registeredActor = storage?.listAccounts({ platform: 'youtube', includeDisconnected: false }).find((account) => account.credentialRef === 'youtube:primary' && account.capabilities?.comment);
-  return Boolean(connectedState && registeredActor && youtube.refreshTokenCipher && youtube.oauthClientId && youtube.grantedScopes.includes(YOUTUBE_COMMENT_SCOPE));
+  const clientSecretReady = !youtubeClientSecretRequired(youtube) || Boolean(youtube.oauthClientSecretCipher);
+  return Boolean(connectedState && registeredActor && youtube.refreshTokenCipher && youtube.oauthClientId && clientSecretReady && youtube.grantedScopes.includes(YOUTUBE_COMMENT_SCOPE));
 }
 
 async function ensureYouTubeAccessToken() {
@@ -376,6 +417,7 @@ async function ensureYouTubeAccessToken() {
 async function connectYouTube() {
   const youtube = ensureYouTubeState();
   if (!youtube.oauthClientId) throw oauthUserError({ code: 'oauth_client_missing' });
+  if (youtubeClientSecretRequired(youtube) && !decryptSecret(youtube.oauthClientSecretCipher)) throw oauthUserError({ code: 'oauth_client_secret_missing' });
   youtube.oauthStatus = 'authorizing';
   youtube.oauthStatusReason = null;
   writeJson(stateFile, state);
@@ -434,17 +476,92 @@ async function disconnectYouTube() {
   return publicState();
 }
 
+function liveModelRouteReady() {
+  return state.provider?.kind === 'openai-compatible'
+    && Boolean(String(state.provider.model || '').trim())
+    && Boolean(String(state.provider.criticModel || '').trim());
+}
+
+function cleanBuildReady() {
+  return Boolean(BUILD_METADATA.applicationCommit && BUILD_METADATA.applicationCommit !== 'unknown' && !BUILD_METADATA.buildDirty);
+}
+
+function metaActorForAutomation(platform) {
+  return storage?.listAccounts({ platform, includeDisconnected: false })
+    .find((account) => account.status === 'connected' && account.capabilities?.reply);
+}
+
+function hasStoredAccountCredential(account) {
+  if (!account?.credentialRef || !storage) return false;
+  return Boolean(decryptSecret(storage.getSecret(account.credentialRef)));
+}
+
+function platformRuntime() {
+  const execution = normalizeAutomationExecution(state.execution || {});
+  const providerReady = liveModelRouteReady();
+  const buildReady = cleanBuildReady();
+  const liveWrites = Boolean(execution.liveWritesEnabled);
+  const runtime = {};
+
+  const youtubeActor = storage?.listAccounts({ platform: 'youtube', includeDisconnected: false })
+    .find((account) => account.status === 'connected' && account.capabilities?.comment);
+  const youtubeConfigured = Boolean(state.youtube?.apiKeyCipher || state.youtube?.refreshTokenCipher);
+  const youtubeReasons = [];
+  if (!youtubeConfigured) youtubeReasons.push('Connect YouTube or add a YouTube Data API key');
+  if (liveWrites && !oauthReady()) youtubeReasons.push('YouTube comment OAuth is not connected');
+  if (liveWrites && !youtubeActor) youtubeReasons.push('No connected YouTube actor account is available');
+  if (liveWrites && !providerReady) youtubeReasons.push('A generation model and independent critic are required for live writes');
+  if (liveWrites && !buildReady) youtubeReasons.push('Live writes require a clean packaged build');
+  runtime.youtube = {
+    platform: 'youtube',
+    label: 'YouTube',
+    enabled: execution.enabledPlatforms.includes('youtube'),
+    ready: youtubeReasons.length === 0,
+    mode: liveWrites ? 'live' : 'simulation',
+    reason: youtubeReasons[0] || (liveWrites ? 'Ready for bounded live execution' : 'Ready for bounded simulation'),
+    reasons: youtubeReasons,
+    actorAccountId: youtubeActor?.accountId || null,
+    contextAccess: state.youtube?.refreshTokenCipher ? 'oauth' : state.youtube?.apiKeyCipher ? 'api_key' : 'none',
+  };
+
+  for (const platform of ['instagram', 'facebook']) {
+    const actor = metaActorForAutomation(platform);
+    const reasons = [];
+    if (state.meta?.status !== 'connected') reasons.push('Meta is not connected');
+    if (!actor) reasons.push(`No connected ${platform} actor account is available`);
+    if (actor && !hasStoredAccountCredential(actor)) reasons.push(`The connected ${platform} credential is unavailable`);
+    if (liveWrites && !providerReady) reasons.push('A generation model and independent critic are required for live writes');
+    if (liveWrites && !buildReady) reasons.push('Live writes require a clean packaged build');
+    runtime[platform] = {
+      platform,
+      label: platform === 'instagram' ? 'Instagram' : 'Facebook',
+      enabled: execution.enabledPlatforms.includes(platform),
+      ready: reasons.length === 0,
+      mode: liveWrites ? 'live' : 'simulation',
+      reason: reasons[0] || (liveWrites ? 'Ready for bounded live execution' : 'Ready for bounded simulation'),
+      reasons,
+      actorAccountId: actor?.accountId || null,
+    };
+  }
+  return runtime;
+}
+
 function publicState() {
   const { apiKeyCipher: _providerSecret, ...providerWithoutSecret } = state.provider || {};
   const youtube = ensureYouTubeState();
+  ensureAutomationState();
   return {
     ...state,
     buildMetadata: BUILD_METADATA,
     provider: { ...providerWithoutSecret, apiKeyConfigured: Boolean(state.provider.apiKeyCipher) },
     youtube: {
       apiKeyConfigured: Boolean(youtube.apiKeyCipher),
+      dataApiReady: Boolean(youtube.apiKeyCipher || youtube.refreshTokenCipher),
+      contextAccess: youtube.refreshTokenCipher ? 'oauth' : youtube.apiKeyCipher ? 'api_key' : 'none',
       oauthClientId: youtube.oauthClientId || '',
       oauthClientIdConfigured: Boolean(youtube.oauthClientId),
+      oauthClientSecretConfigured: Boolean(youtube.oauthClientSecretCipher),
+      oauthClientSecretRequired: youtubeClientSecretRequired(youtube),
       oauthStatus: youtube.oauthStatus,
       oauthStatusReason: youtube.oauthStatusReason,
       oauthReady: oauthReady(),
@@ -458,12 +575,14 @@ function publicState() {
     meta: {
       appId: state.meta?.appId || '',
       appIdConfigured: Boolean(state.meta?.appId),
+      appSecretConfigured: Boolean(state.meta?.appSecretCipher),
       graphApiVersion: state.meta?.graphApiVersion || 'v26.0',
       status: state.meta?.status || 'disconnected',
       statusReason: state.meta?.statusReason || null,
       permissions: Array.isArray(state.meta?.permissions) ? [...state.meta.permissions] : [],
       lastConnectedAt: state.meta?.lastConnectedAt || null,
     },
+    platformRuntime: platformRuntime(),
     accounts: storage ? storage.listAccounts() : [],
     reconciliationInbox: storage ? storage.listReconciliation() : [],
     metricSnapshots: storage ? storage.listMetricSnapshots({ limit: 60 }) : [],
@@ -471,6 +590,56 @@ function publicState() {
     evaluationExamples: storage ? storage.listEvaluationExamples({ limit: 60 }) : [],
     storage: storage ? storage.status() : null,
   };
+}
+
+function publishAutomationState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('automation:state', publicState());
+}
+
+function setupAutomationRunner() {
+  automationRunner = new AutomationRunner({
+    getExecution: () => state.execution,
+    getRuntime: () => ensureAutomationState(),
+    setRuntime: (runtime) => { state.automation = runtime; },
+    persist: () => writeJson(stateFile, state),
+    runPlatform: (platform) => runPlatformCycle(platform),
+    onState: () => publishAutomationState(),
+  });
+}
+
+function runPlatformCycle(platform, input = {}) {
+  if (cycleInFlight) {
+    const error = new Error('Another bounded automation cycle is already running. The next scheduled run will continue after it finishes.');
+    error.code = 'cycle_in_progress';
+    return Promise.reject(error);
+  }
+  const task = platform === 'youtube' ? runYouTubeCycle(input) : runMetaCycle(platform);
+  const tracked = Promise.resolve(task).finally(() => {
+    if (cycleInFlight === tracked) cycleInFlight = null;
+  });
+  cycleInFlight = tracked;
+  return tracked;
+}
+
+function syncAutomationRuntime({ runNow = false, reason = 'configuration' } = {}) {
+  if (!automationRunner) return;
+  state.execution = normalizeAutomationExecution(state.execution || {});
+  const execution = state.execution;
+  const result = execution.autonomyEnabled && !execution.paused
+    ? automationRunner.start({ runNow, reason })
+    : automationRunner.stop(execution.paused ? 'kill_switch' : 'autonomy_disabled');
+  if (result && typeof result.catch === 'function') {
+    result.catch((error) => {
+      automationRunner.updateRuntime({
+        status: 'ERROR',
+        currentPlatform: null,
+        currentRunStartedAt: null,
+        nextRunAt: null,
+        lastError: String(error?.message || error).slice(0, 300),
+      });
+    });
+  }
 }
 
 function contextPayloadFingerprint(context) {
@@ -866,6 +1035,70 @@ async function runMetaCycle(platform) {
   return { platform, discovered: ownedMedia.length, ranked: rankedTargets.length, completedActions, results, lastAnalysis: state.lastAnalysis || null, state: publicState() };
 }
 
+async function runYouTubeCycle(input = {}) {
+  if (state.execution.paused) throw new Error('Autonomy is paused by the kill switch');
+  if (!state.execution.autonomyEnabled) throw new Error('Enable bounded auto-run before starting a niche cycle');
+  const apiKey = decryptSecret(state.youtube?.apiKeyCipher);
+  let accessToken = '';
+  if (state.youtube?.refreshTokenCipher) {
+    try {
+      accessToken = await ensureYouTubeAccessToken();
+    } catch (error) {
+      if (!apiKey || state.execution.liveWritesEnabled) throw error;
+    }
+  }
+  if (!apiKey && !accessToken) throw new Error('YouTube Data API access is required for niche discovery. Connect YouTube or add a Data API key.');
+  const fallbackQuery = (state.profile.nicheTerms || []).slice(0, 4).join('|');
+  const query = String(input?.query || fallbackQuery).trim().slice(0, 240);
+  const lookbackMs = Number(state.execution.discoveryLookbackDays || 7) * 86400000;
+  const discoveredTargets = await discoverVideos({
+    query,
+    apiKey,
+    accessToken,
+    maxResults: Math.min(25, Number(state.execution.maxCommentsPerRun || 3) * 4),
+    publishedAfter: new Date(Date.now() - lookbackMs).toISOString(),
+  });
+  const targets = rankDiscoveryTargets({ targets: discoveredTargets, profile: state.profile, history: readLedger(), lookbackDays: state.execution.discoveryLookbackDays });
+  const results = [];
+  let completedActions = 0;
+  for (const target of targets) {
+    if (completedActions >= Number(state.execution.maxCommentsPerRun || 3)) break;
+    if (!target.ranking.eligible) {
+      results.push({ targetUrl: target.url, targetAccount: target.account, status: 'FILTERED_BY_RANKING', reason: target.ranking.exclusionReason, targetRanking: target.ranking });
+      continue;
+    }
+    try {
+      const fetchedContext = await fetchContext({ url: target.url, apiKey, accessToken });
+      const youtubeActor = storage.listAccounts({ platform: 'youtube', includeDisconnected: false }).find((account) => account.credentialRef === 'youtube:primary' && account.status === 'connected');
+      const context = { ...fetchedContext, actorAccountId: youtubeActor?.accountId || null };
+      context.discoveryRanking = rankDiscoveryTarget({ target, context, profile: state.profile, history: readLedger(), lookbackDays: state.execution.discoveryLookbackDays });
+      const analysis = await runAnalysis({ context, profile: state.profile, provider: configuredProvider(), history: readLedger().filter((row) => row.status === 'LIVE_VERIFIED'), exemplars: storage.listExemplars({ platform: 'youtube' }) });
+      analysis.contextPayloadFingerprint = contextPayloadFingerprint(context);
+      const selected = analysis.candidates.find((candidate) => candidate.id === analysis.selectedId);
+      if (!selected) {
+        results.push({ targetUrl: target.url, targetAccount: target.account, status: 'BLOCKED_BY_GATES', targetRanking: analysis.pack.source.discoveryRanking, reasons: analysis.candidates.flatMap((candidate) => candidate.gate.blocked).slice(0, 8) });
+        continue;
+      }
+      const receipt = state.execution.liveWritesEnabled
+        ? await executeYouTubeAction(selected, analysis.pack)
+        : simulationReceipt({ platform: 'youtube', targetUrl: analysis.pack.source.url, candidate: selected, pack: analysis.pack });
+      if (!state.execution.liveWritesEnabled) appendLedger(receipt);
+      completedActions += 1;
+      state.context = context;
+      state.lastAnalysis = analysis;
+      results.push({ targetUrl: target.url, targetAccount: target.account, status: receipt.status, receiptId: receipt.receiptId, targetRanking: analysis.pack.source.discoveryRanking });
+    } catch (error) {
+      results.push({ targetUrl: target.url, targetAccount: target.account, status: error.executionStatus || 'SKIPPED', reason: String(error.message || error).slice(0, 300) });
+      if (error.executionStatus === 'UNKNOWN') {
+        state.execution.paused = true;
+        break;
+      }
+    }
+  }
+  writeJson(stateFile, state);
+  return { query, platform: 'youtube', discovered: discoveredTargets.length, ranked: targets.length, completedActions, results, lastAnalysis: state.lastAnalysis || null, state: publicState() };
+}
+
 function assertSender(event) {
   if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('Untrusted IPC sender');
 }
@@ -915,11 +1148,18 @@ function registerHandlers() {
   ipcMain.handle('state:save-execution', (event, execution) => {
     assertSender(event);
     execution = execution || {};
+    const previous = { ...state.execution };
     state.execution = {
       ...state.execution,
       autonomyEnabled: execution.autonomyEnabled === undefined ? state.execution.autonomyEnabled : Boolean(execution.autonomyEnabled),
       liveWritesEnabled: execution.liveWritesEnabled === undefined ? state.execution.liveWritesEnabled : Boolean(execution.liveWritesEnabled),
       paused: execution.paused === undefined ? state.execution.paused : Boolean(execution.paused),
+      cycleIntervalMinutes: execution.cycleIntervalMinutes === undefined
+        ? normalizeIntervalMinutes(state.execution.cycleIntervalMinutes)
+        : normalizeIntervalMinutes(execution.cycleIntervalMinutes),
+      enabledPlatforms: execution.enabledPlatforms === undefined
+        ? normalizePlatforms(state.execution.enabledPlatforms)
+        : normalizePlatforms(execution.enabledPlatforms),
       maxCommentsPerRun: clampNumber(execution.maxCommentsPerRun, state.execution.maxCommentsPerRun, 1, 10),
       maxCommentsPer24Hours: clampNumber(execution.maxCommentsPer24Hours, state.execution.maxCommentsPer24Hours, 1, 50),
       discoveryLookbackDays: clampNumber(execution.discoveryLookbackDays, state.execution.discoveryLookbackDays, 1, 30),
@@ -928,6 +1168,10 @@ function registerHandlers() {
       minimumGateScore: clampNumber(execution.minimumGateScore, state.execution.minimumGateScore, 60, 100),
     };
     writeJson(stateFile, state);
+    syncAutomationRuntime({
+      runNow: Boolean(state.execution.autonomyEnabled && !state.execution.paused && (!previous.autonomyEnabled || previous.paused)),
+      reason: previous.paused && !state.execution.paused ? 'resumed' : 'configuration',
+    });
     return publicState();
   });
   ipcMain.handle('provider:save', (event, provider) => {
@@ -951,7 +1195,7 @@ function registerHandlers() {
     const youtube = ensureYouTubeState();
     const nextClientId = secrets.oauthClientId === undefined
       ? youtube.oauthClientId
-      : String(secrets.oauthClientId || '').trim().slice(0, 240);
+      : String(secrets.oauthClientId || '').trim().slice(0, 240) || DEFAULT_YOUTUBE_OAUTH_CLIENT_ID;
     if (nextClientId !== youtube.oauthClientId) {
       clearYouTubeOAuthTokens();
       youtube.oauthStatus = 'disconnected';
@@ -975,7 +1219,7 @@ function registerHandlers() {
   ipcMain.handle('meta:save-secrets', (event, input) => {
     assertSender(event);
     const meta = ensureMetaState();
-    const nextAppId = String(input?.appId || '').trim().slice(0, 240);
+    const nextAppId = String(input?.appId || '').trim().slice(0, 240) || DEFAULT_META_APP_ID;
     if (nextAppId !== meta.appId) {
       meta.status = 'disconnected';
       meta.statusReason = 'meta_app_changed';
@@ -983,7 +1227,7 @@ function registerHandlers() {
     meta.appId = nextAppId;
     meta.graphApiVersion = /^v\d+\.\d+$/.test(String(input?.graphApiVersion || '')) ? String(input.graphApiVersion) : META_API_VERSION;
     if (input?.appSecret) meta.appSecretCipher = encryptSecret(String(input.appSecret));
-    if (meta.status === 'disconnected' && (meta.appId || meta.appSecretCipher)) meta.status = 'configured';
+    if (meta.status === 'disconnected' && meta.appId && meta.appSecretCipher) meta.status = 'configured';
     writeJson(stateFile, state);
     return publicState();
   });
@@ -999,11 +1243,11 @@ function registerHandlers() {
     assertSender(event);
     const apiKey = decryptSecret(state.youtube?.apiKeyCipher);
     let accessToken = '';
-    if (oauthReady()) {
+    if (state.youtube?.refreshTokenCipher) {
       try {
         accessToken = await ensureYouTubeAccessToken();
       } catch (error) {
-        accessToken = '';
+        if (!apiKey) throw error;
       }
     }
     const fetchedContext = await fetchContext({ url: String(input?.url || ''), apiKey, accessToken });
@@ -1072,8 +1316,8 @@ function registerHandlers() {
   ipcMain.handle('analysis:run', async (event, context) => {
     assertSender(event);
     const provider = configuredProvider();
-    const incoming = context || state.context || DEFAULT_CONTEXT;
-    const previous = state.context || DEFAULT_CONTEXT;
+    const incoming = context || state.context || RUNTIME_DEFAULT_CONTEXT;
+    const previous = state.context || RUNTIME_DEFAULT_CONTEXT;
     const samePayload = contextPayloadFingerprint(incoming) === contextPayloadFingerprint(previous);
     state.context = samePayload
       ? {
@@ -1093,7 +1337,7 @@ function registerHandlers() {
   ipcMain.handle('llm:chat', async (event, input) => {
     assertSender(event);
     const provider = configuredProvider();
-    return chatWithProvider({ message: input?.message, context: state.context || DEFAULT_CONTEXT, profile: state.profile, provider });
+    return chatWithProvider({ message: input?.message, context: state.context || RUNTIME_DEFAULT_CONTEXT, profile: state.profile, provider });
   });
   ipcMain.handle('execution:simulate', (event, input) => {
     assertSender(event);
@@ -1135,71 +1379,24 @@ function registerHandlers() {
   });
   ipcMain.handle('execution:youtube-cycle', async (event, input) => {
     assertSender(event);
-    if (state.execution.paused) throw new Error('Autonomy is paused by the kill switch');
-    if (!state.execution.autonomyEnabled) throw new Error('Enable bounded auto-run before starting a niche cycle');
-    const apiKey = decryptSecret(state.youtube?.apiKeyCipher);
-    if (!apiKey) throw new Error('YouTube Data API key is required for niche discovery');
-    let accessToken = '';
-    if (state.execution.liveWritesEnabled) accessToken = await ensureYouTubeAccessToken();
-    const fallbackQuery = (state.profile.nicheTerms || []).slice(0, 4).join('|');
-    const query = String(input?.query || fallbackQuery).trim().slice(0, 240);
-    const lookbackMs = Number(state.execution.discoveryLookbackDays || 7) * 86400000;
-    const discoveredTargets = await discoverVideos({
-      query,
-      apiKey,
-      maxResults: Math.min(25, Number(state.execution.maxCommentsPerRun || 3) * 4),
-      publishedAfter: new Date(Date.now() - lookbackMs).toISOString(),
-    });
-    const targets = rankDiscoveryTargets({ targets: discoveredTargets, profile: state.profile, history: readLedger(), lookbackDays: state.execution.discoveryLookbackDays });
-    const results = [];
-    let completedActions = 0;
-    for (const target of targets) {
-      if (completedActions >= Number(state.execution.maxCommentsPerRun || 3)) break;
-      if (!target.ranking.eligible) {
-        results.push({ targetUrl: target.url, targetAccount: target.account, status: 'FILTERED_BY_RANKING', reason: target.ranking.exclusionReason, targetRanking: target.ranking });
-        continue;
-      }
-      try {
-        const fetchedContext = await fetchContext({ url: target.url, apiKey, accessToken });
-        const youtubeActor = storage.listAccounts({ platform: 'youtube', includeDisconnected: false }).find((account) => account.credentialRef === 'youtube:primary' && account.status === 'connected');
-        const context = { ...fetchedContext, actorAccountId: youtubeActor?.accountId || null };
-        context.discoveryRanking = rankDiscoveryTarget({ target, context, profile: state.profile, history: readLedger(), lookbackDays: state.execution.discoveryLookbackDays });
-        const analysis = await runAnalysis({ context, profile: state.profile, provider: configuredProvider(), history: readLedger().filter((row) => row.status === 'LIVE_VERIFIED'), exemplars: storage.listExemplars({ platform: 'youtube' }) });
-        analysis.contextPayloadFingerprint = contextPayloadFingerprint(context);
-        const selected = analysis.candidates.find((candidate) => candidate.id === analysis.selectedId);
-        if (!selected) {
-          results.push({ targetUrl: target.url, targetAccount: target.account, status: 'BLOCKED_BY_GATES', targetRanking: analysis.pack.source.discoveryRanking, reasons: analysis.candidates.flatMap((candidate) => candidate.gate.blocked).slice(0, 8) });
-          continue;
-        }
-        const receipt = state.execution.liveWritesEnabled
-          ? await executeYouTubeAction(selected, analysis.pack)
-          : simulationReceipt({ platform: 'youtube', targetUrl: analysis.pack.source.url, candidate: selected, pack: analysis.pack });
-        if (!state.execution.liveWritesEnabled) appendLedger(receipt);
-        completedActions += 1;
-        state.context = context;
-        state.lastAnalysis = analysis;
-        results.push({ targetUrl: target.url, targetAccount: target.account, status: receipt.status, receiptId: receipt.receiptId, targetRanking: analysis.pack.source.discoveryRanking });
-      } catch (error) {
-        results.push({ targetUrl: target.url, targetAccount: target.account, status: error.executionStatus || 'SKIPPED', reason: String(error.message || error).slice(0, 300) });
-        if (error.executionStatus === 'UNKNOWN') {
-          state.execution.paused = true;
-          break;
-        }
-      }
-    }
-    writeJson(stateFile, state);
-    return { query, discovered: discoveredTargets.length, ranked: targets.length, completedActions, results, lastAnalysis: state.lastAnalysis || null, state: publicState() };
+    return runPlatformCycle('youtube', input);
   });
   ipcMain.handle('execution:meta-cycle', async (event, input) => {
     assertSender(event);
     if (state.execution.paused) throw new Error('Autonomy is paused by the kill switch');
     if (!state.execution.autonomyEnabled) throw new Error('Enable bounded auto-run before starting an owned-media cycle');
-    const result = await runMetaCycle(String(input?.platform || '').toLowerCase());
+    const result = await runPlatformCycle(String(input?.platform || '').toLowerCase());
     if (result.results.some((item) => item.status === 'UNKNOWN')) {
       state.execution.paused = true;
       writeJson(stateFile, state);
     }
     return result;
+  });
+  ipcMain.handle('execution:automation-now', async (event) => {
+    assertSender(event);
+    if (!state.execution.autonomyEnabled) throw new Error('Enable autonomous run once before starting automation.');
+    const result = await automationRunner.trigger('operator');
+    return { ...result, state: publicState() };
   });
   ipcMain.handle('ledger:list', (event) => {
     assertSender(event);
@@ -1258,18 +1455,32 @@ app.whenReady().then(() => {
   state = storage.loadState(defaultState());
   ensureYouTubeState();
   state.profile = { ...DEFAULT_PROFILE, ...(state.profile || {}) };
-  state.context = state.context || DEFAULT_CONTEXT;
-  state.execution = { ...defaultState().execution, ...(state.execution || {}) };
+  state.context = state.context && !isSyntheticContext(state.context)
+    ? state.context
+    : { ...RUNTIME_DEFAULT_CONTEXT, comments: [], transcriptSegments: [], visualObservations: [], visualProvenance: [] };
+  state.execution = normalizeAutomationExecution({ ...defaultState().execution, ...(state.execution || {}) });
   state.provider = { kind: 'demo', name: 'Local demo', model: 'deterministic-demo', visionModel: '', transcriptionModel: '', criticModel: '', baseUrl: '', ...(state.provider || {}) };
   state.meta = { ...defaultState().meta, ...(state.meta || {}) };
   ensureMetaState();
+  if (state.youtube.oauthStatus === 'authorizing') {
+    state.youtube.oauthStatus = 'disconnected';
+    state.youtube.oauthStatusReason = 'oauth_interrupted';
+  }
+  if (state.meta.status === 'authorizing') {
+    state.meta.status = 'disconnected';
+    state.meta.statusReason = 'oauth_interrupted';
+  }
+  ensureAutomationState();
   writeJson(stateFile, state);
+  setupAutomationRunner();
   registerHandlers();
   Menu.setApplicationMenu(null);
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   createWindow();
+  syncAutomationRuntime({ runNow: Boolean(state.execution.autonomyEnabled), reason: 'startup' });
 });
 
 app.on('window-all-closed', () => {
+  automationRunner?.stop('app_closed');
   if (process.platform !== 'darwin') app.quit();
 });

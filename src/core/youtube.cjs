@@ -29,17 +29,20 @@ function parseVideoId(input) {
   throw new Error('Could not find a video ID in the YouTube URL');
 }
 
-async function apiGet(path, params, apiKey) {
+async function apiGet(path, params, { apiKey = '', accessToken = '' } = {}) {
   const url = new URL(`${API_ROOT}/${path}`);
-  Object.entries({ ...params, key: apiKey }).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetch(url);
+  Object.entries(params || {}).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+  if (apiKey) url.searchParams.set('key', String(apiKey));
+  const response = await fetch(url, {
+    headers: accessToken ? { Authorization: `Bearer ${String(accessToken).trim()}` } : {},
+  });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.error) throw apiError('API request failed', response, payload);
   return payload;
 }
 
-async function discoverVideos({ query, apiKey, maxResults = 12, publishedAfter }) {
-  if (!apiKey) throw new Error('YouTube Data API key is not configured');
+async function discoverVideos({ query, apiKey = '', accessToken = '', maxResults = 12, publishedAfter }) {
+  if (!apiKey && !accessToken) throw new Error('YouTube Data API access is not configured. Connect YouTube or add a Data API key.');
   const cleanQuery = normalizeText(query);
   if (!cleanQuery) throw new Error('A niche discovery query is required');
   const payload = await apiGet('search', {
@@ -50,7 +53,7 @@ async function discoverVideos({ query, apiKey, maxResults = 12, publishedAfter }
     safeSearch: 'strict',
     maxResults: Math.min(25, Math.max(1, maxResults)),
     ...(publishedAfter ? { publishedAfter } : {}),
-  }, apiKey);
+  }, { apiKey, accessToken });
   return (payload.items || []).map((item) => ({
     platform: 'youtube',
     videoId: item.id?.videoId || '',
@@ -114,9 +117,9 @@ async function fetchAuthorizedChannel({ accessToken }) {
 }
 
 async function fetchContext({ url, apiKey, accessToken, maxComments = 20 }) {
-  if (!apiKey) throw new Error('YouTube Data API key is not configured');
+  if (!apiKey && !accessToken) throw new Error('YouTube Data API access is not configured. Connect YouTube or add a Data API key.');
   const videoId = parseVideoId(url);
-  const payload = await apiGet('videos', { part: 'snippet,contentDetails,statistics', id: videoId }, apiKey);
+  const payload = await apiGet('videos', { part: 'snippet,contentDetails,statistics', id: videoId }, { apiKey, accessToken });
   const video = payload.items?.[0];
   if (!video) throw new Error('YouTube video was not found or is not public');
   let comments = [];
@@ -124,7 +127,7 @@ async function fetchContext({ url, apiKey, accessToken, maxComments = 20 }) {
   try {
     const commentPayload = await apiGet('commentThreads', {
       part: 'snippet,replies', videoId, maxResults: Math.min(100, Math.max(1, maxComments)), order: 'relevance', textFormat: 'plainText',
-    }, apiKey);
+    }, { apiKey, accessToken });
     comments = (commentPayload.items || []).map((item) => {
       const snippet = item.snippet?.topLevelComment?.snippet || {};
       return { id: item.snippet?.topLevelComment?.id || item.id || '', text: normalizeText(snippet.textOriginal || snippet.textDisplay), likes: Number(snippet.likeCount || 0), publishedAt: snippet.publishedAt || '' };

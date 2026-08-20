@@ -50,6 +50,35 @@ const DEFAULT_CONTEXT = {
   contextSources: ['demo_fixture'],
 };
 
+// The demo fixture remains available to deterministic unit tests and preview
+// analysis, but a new desktop install must open on an empty, truthful context.
+const RUNTIME_DEFAULT_CONTEXT = {
+  platform: 'youtube',
+  targetScope: 'external',
+  action: 'comment',
+  url: '',
+  videoId: '',
+  channelId: '',
+  account: '',
+  title: '',
+  description: '',
+  transcript: '',
+  visualNotes: '',
+  comments: [],
+  publishedAt: '',
+  contextSources: ['empty_state'],
+  captionStatus: 'not_hydrated',
+  visualStatus: 'not_hydrated',
+  authorizedMediaStatus: 'NOT_INSPECTED',
+  transcriptStatus: 'not_hydrated',
+  transcriptSegments: [],
+  visualObservations: [],
+  visualProvenance: [],
+  mediaProvenance: null,
+  transcriptProvenance: null,
+  metrics: null,
+};
+
 const STOP_WORDS = new Set([
   'about', 'after', 'again', 'before', 'being', 'could', 'first', 'from', 'have',
   'into', 'just', 'more', 'most', 'only', 'other', 'over', 'same', 'should',
@@ -837,6 +866,8 @@ function defaultState() {
       autonomyEnabled: false,
       liveWritesEnabled: false,
       paused: false,
+      cycleIntervalMinutes: 60,
+      enabledPlatforms: ['youtube', 'instagram', 'facebook'],
       maxCommentsPerRun: 3,
       maxCommentsPer24Hours: 10,
       discoveryLookbackDays: 7,
@@ -844,7 +875,13 @@ function defaultState() {
       accountCooldownHours: 24,
       minimumGateScore: 80,
     },
-    context: DEFAULT_CONTEXT,
+    context: {
+      ...RUNTIME_DEFAULT_CONTEXT,
+      comments: [],
+      transcriptSegments: [],
+      visualObservations: [],
+      visualProvenance: [],
+    },
   };
 }
 
@@ -902,6 +939,7 @@ function assessExecutionPolicy({ ledger = [], execution = {}, action, now = Date
 
 module.exports = {
   DEFAULT_CONTEXT,
+  RUNTIME_DEFAULT_CONTEXT,
   DEFAULT_PROFILE,
   PLATFORM_CAPABILITIES,
   capabilityFor,

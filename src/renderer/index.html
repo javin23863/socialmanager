@@ -31,7 +31,7 @@
             <span>LOADING STATE</span>
           </div>
           <button class="button button-quiet" id="kill-switch" type="button">PAUSE AUTONOMY</button>
-          <button class="button button-primary" id="run-cycle" type="button">RUN YOUTUBE NICHE CYCLE</button>
+          <button class="button button-primary" id="run-cycle" type="button">RUN AUTOMATION NOW</button>
         </div>
       </header>
 
@@ -49,7 +49,7 @@
               <span class="mini-state" id="policy-state">OFF</span>
             </div>
             <label class="switch-row" for="autonomy-enabled">
-              <span>Auto-run passing target</span>
+              <span>Enable autonomous worker</span>
               <input id="autonomy-enabled" type="checkbox">
               <span class="switch" aria-hidden="true"></span>
             </label>
@@ -59,15 +59,43 @@
               <span class="switch" aria-hidden="true"></span>
             </label>
             <p class="field-note" id="write-note">Simulation receipts only until an official adapter and scope are configured.</p>
+            <div class="automation-block" aria-live="polite">
+              <div class="automation-block-heading">
+                <span class="field-label automation-label">Backend worker</span>
+                <span class="mini-state" id="automation-status">DISABLED</span>
+              </div>
+              <p class="field-note" id="automation-status-copy">Enable the worker once; it will run the enabled surfaces sequentially and resume after restart.</p>
+              <label class="field-label" for="automation-interval">Automatic cycle interval (minutes)</label>
+              <input class="field-input" id="automation-interval" type="number" min="5" max="1440" step="1">
+              <p class="field-label automation-label">Automatic surfaces</p>
+              <label class="switch-row automation-surface-row" for="automation-youtube">
+                <span>YouTube <span class="automation-surface-state" id="automation-youtube-state">—</span></span>
+                <input id="automation-youtube" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+              <label class="switch-row automation-surface-row" for="automation-instagram">
+                <span>Instagram <span class="automation-surface-state" id="automation-instagram-state">—</span></span>
+                <input id="automation-instagram" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+              <label class="switch-row automation-surface-row" for="automation-facebook">
+                <span>Facebook <span class="automation-surface-state" id="automation-facebook-state">—</span></span>
+                <input id="automation-facebook" type="checkbox">
+                <span class="switch" aria-hidden="true"></span>
+              </label>
+              <p class="field-note" id="automation-next-run">No automatic run scheduled.</p>
+            </div>
             <label class="field-label" for="discovery-query">YouTube discovery query</label>
             <input class="field-input" id="discovery-query" type="text" placeholder="market structure|liquidity|breadth" autocomplete="off">
-            <label class="field-label" for="cycle-platform">Cycle surface</label>
+            <label class="field-label" for="cycle-platform">One-off diagnostic surface</label>
             <select class="field-input" id="cycle-platform">
               <option value="youtube">YouTube niche discovery</option>
               <option value="instagram">Instagram owned community care</option>
               <option value="facebook">Facebook Page community care</option>
               <option value="tiktok" disabled>TikTok — last / read-only external</option>
             </select>
+            <p class="field-note">The top-bar action runs every enabled surface through the backend worker. This selector is only for a one-off diagnostic cycle.</p>
+            <button class="button button-secondary button-wide" id="run-selected-cycle" type="button">RUN SELECTED ONCE</button>
             <div class="policy-grid">
               <label class="field-label" for="max-per-run">Per run<input class="field-input" id="max-per-run" type="number" min="1" max="10"></label>
               <label class="field-label" for="max-per-day">Per 24h<input class="field-input" id="max-per-day" type="number" min="1" max="50"></label>
@@ -135,19 +163,19 @@
               <h2>YouTube connection</h2>
               <button class="text-button" id="save-youtube" type="button">SAVE</button>
             </div>
-            <label class="field-label" for="youtube-api-key">Data API key</label>
-            <input class="field-input" id="youtube-api-key" type="password" placeholder="optional for URL hydration" autocomplete="new-password">
+            <label class="field-label" for="youtube-api-key">Data API key <span class="label-hint">optional when OAuth is connected</span></label>
+            <input class="field-input" id="youtube-api-key" type="password" placeholder="optional fallback for public context" autocomplete="new-password">
             <label class="field-label" for="youtube-oauth-client-id">Desktop OAuth client ID</label>
             <input class="field-input" id="youtube-oauth-client-id" type="text" placeholder="...apps.googleusercontent.com" autocomplete="off">
-            <label class="field-label" for="youtube-oauth-client-secret">OAuth client secret <span class="label-hint">optional for desktop clients</span></label>
+            <label class="field-label" for="youtube-oauth-client-secret">OAuth client secret <span class="label-hint">required by the prefilled client</span></label>
             <input class="field-input" id="youtube-oauth-client-secret" type="password" placeholder="leave blank to keep stored value" autocomplete="new-password">
-            <p class="field-note">Connect opens the system browser and returns through a loopback callback protected by PKCE. Tokens stay in OS-protected storage; they never enter the renderer, model, or receipt ledger.</p>
+            <p class="field-note">The existing TraderCockpit desktop client is prefilled. Connect opens the signed-in browser and returns through a loopback callback protected by PKCE. OAuth supplies discovery, context, captions, and comments; tokens stay in OS-protected storage.</p>
             <div class="button-row">
               <button class="button button-secondary" id="connect-youtube" type="button">CONNECT YOUTUBE</button>
               <button class="button button-quiet" id="disconnect-youtube" type="button">DISCONNECT</button>
             </div>
             <p class="field-note" id="youtube-scope">Requested scope: YouTube comment read/write (`youtube.force-ssl`).</p>
-            <p class="field-note" id="youtube-status">No YouTube credentials configured.</p>
+            <p class="field-note" id="youtube-status">OAuth client prefilled; connect once to authorize.</p>
           </section>
 
           <section class="rail-section">
@@ -161,13 +189,13 @@
             <input class="field-input" id="meta-graph-version" type="text" placeholder="v26.0" autocomplete="off">
             <label class="field-label" for="meta-app-secret">Meta App Secret</label>
             <input class="field-input" id="meta-app-secret" type="password" placeholder="leave blank to keep stored value" autocomplete="new-password">
-            <p class="field-note">Uses Meta’s official Facebook Login route to discover managed Pages and linked professional Instagram accounts. App Review, Business Verification, permissions, and a public webhook callback remain Meta requirements; no browser scraping or private endpoints are used.</p>
+            <p class="field-note">The existing Trader Cockpit app ID is prefilled. Add its App Secret once, then Meta’s official Facebook Login route discovers managed Pages and linked professional Instagram accounts. No browser scraping or private endpoints are used.</p>
             <div class="button-row">
               <button class="button button-secondary" id="connect-meta" type="button">CONNECT META</button>
               <button class="button button-quiet" id="disconnect-meta" type="button">DISCONNECT</button>
             </div>
             <p class="field-note" id="meta-permissions">Community permissions are not configured.</p>
-            <p class="field-note" id="meta-status">No Meta credentials configured.</p>
+            <p class="field-note" id="meta-status">Meta app detected; add the App Secret once to authorize.</p>
           </section>
         </aside>
 

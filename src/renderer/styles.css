@@ -117,6 +117,17 @@ button:disabled { cursor: not-allowed; opacity: 0.45; }
 .policy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 8px; margin-top: 5px; }
 .policy-grid .field-label:last-child { grid-column: 1 / -1; }
 .policy-grid .field-input { display: block; margin-top: 5px; }
+.automation-block { margin-top: 14px; padding: 11px 10px 10px; border: 1px solid var(--line); background: var(--paper); }
+.automation-block-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.automation-block .automation-label { margin: 0; }
+.automation-surface-row { min-height: 31px; font-size: 11px; }
+.automation-surface-state { display: block; margin-top: 1px; color: var(--muted); font-size: 9px; line-height: 1.25; }
+.automation-surface-ready { color: var(--green); }
+.automation-surface-blocked { color: var(--red); }
+.automation-state-running { color: var(--cobalt); border-color: #aebcff; background: var(--cobalt-soft); }
+.automation-state-scheduled { color: var(--green); border-color: #a4c9b8; background: var(--green-soft); }
+.automation-state-paused, .automation-state-error { color: var(--red); border-color: #e2aeb5; background: var(--red-soft); }
+.automation-state-disabled, .automation-state-stopped { color: var(--muted); }
 
 .workbench { min-width: 0; padding: 24px; background: var(--bg); }
 .workspace-heading { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 20px; }

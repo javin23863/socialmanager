@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const {
   YOUTUBE_COMMENT_SCOPE,
+  DEFAULT_YOUTUBE_OAUTH_CLIENT_ID,
   AUTH_ENDPOINT,
   TOKEN_ENDPOINT,
   createPkcePair,
@@ -13,6 +14,10 @@ const {
   refreshAccessToken,
   isAccessTokenUsable,
 } = require('../src/core/youtube-auth.cjs');
+
+test('the standalone app ships the existing public desktop client identifier', () => {
+  assert.match(DEFAULT_YOUTUBE_OAUTH_CLIENT_ID, /^\d+-[a-z0-9-]+\.apps\.googleusercontent\.com$/);
+});
 
 function base64Url(value) {
   return Buffer.from(value).toString('base64url');

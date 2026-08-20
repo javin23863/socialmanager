@@ -22,6 +22,12 @@ contextBridge.exposeInMainWorld('studio', {
   executeMeta: (input) => ipcRenderer.invoke('execution:meta', input),
   runYouTubeCycle: (input) => ipcRenderer.invoke('execution:youtube-cycle', input),
   runMetaCycle: (input) => ipcRenderer.invoke('execution:meta-cycle', input),
+  runAutomationNow: () => ipcRenderer.invoke('execution:automation-now'),
+  onAutomationState: (callback) => {
+    const listener = (_event, nextState) => callback(nextState);
+    ipcRenderer.on('automation:state', listener);
+    return () => ipcRenderer.removeListener('automation:state', listener);
+  },
   listLedger: () => ipcRenderer.invoke('ledger:list'),
   listAccounts: () => ipcRenderer.invoke('accounts:list'),
   listReconciliation: () => ipcRenderer.invoke('reconciliation:list'),

@@ -4,6 +4,7 @@ const http = require('node:http');
 const {
   DEFAULT_CONTEXT,
   DEFAULT_PROFILE,
+  defaultState,
   buildContextPack,
   capabilityFor,
   evaluateCandidate,
@@ -28,6 +29,14 @@ const usefulCandidate = {
   valueAdd: 'test',
   risk: 'low',
 };
+
+test('production default state is empty while the demo fixture remains explicit', () => {
+  const state = defaultState();
+  assert.deepEqual(state.context.contextSources, ['empty_state']);
+  assert.equal(state.context.url, '');
+  assert.equal(state.context.videoId, '');
+  assert.deepEqual(state.execution.enabledPlatforms, ['youtube', 'instagram', 'facebook']);
+});
 
 function contextFor(platform, targetScope = 'external') {
   return {
